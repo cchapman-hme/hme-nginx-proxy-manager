@@ -77,6 +77,12 @@
 						},
 						"locations": {
 							"$ref": "../../../components/proxy-host-object.json#/properties/locations"
+						},
+						"sso_enabled": {
+							"$ref": "../../../components/proxy-host-object.json#/properties/sso_enabled"
+						},
+						"sso_forced_groups": {
+							"$ref": "../../../components/proxy-host-object.json#/properties/sso_forced_groups"
 						}
 					}
 				},

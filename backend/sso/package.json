@@ -3,6 +3,9 @@
 	"version": "1.0.0",
 	"type": "module",
 	"private": true,
+	"scripts": {
+		"test": "node --test tests/*.test.js"
+	},
 	"dependencies": {
 		"@azure/msal-node": "^2.16.2",
 		"better-sqlite3": "^12.6.2",

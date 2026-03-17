@@ -23,7 +23,8 @@
 		"locations",
 		"hsts_enabled",
 		"hsts_subdomains",
-		"trust_forwarded_proto"
+		"trust_forwarded_proto",
+		"sso_enabled"
 	],
 	"properties": {
 		"id": {
@@ -146,6 +147,22 @@
 			"type": "boolean",
 			"description": "Trust the forwarded headers",
 			"example": false
+		},
+		"sso_enabled": {
+			"type": "boolean",
+			"description": "Enable Azure SSO authentication for this proxy host",
+			"example": true
+		},
+		"sso_forced_groups": {
+			"oneOf": [
+				{ "type": "null" },
+				{
+					"type": "array",
+					"items": { "type": "string" }
+				}
+			],
+			"description": "Azure AD group IDs required to access this host (null = use global default)",
+			"example": null
 		},
 		"certificate": {
 			"oneOf": [

@@ -725,6 +725,9 @@
 	"settings.sso.save-warning": {
 		"defaultMessage": "Saving will regenerate all proxy host nginx configs."
 	},
+	"settings.sso.https-note": {
+		"defaultMessage": "SSO requires HTTPS on all protected proxy hosts. Session cookies use the Secure flag in production and will not work over plain HTTP."
+	},
 	"setup.preamble": {
 		"defaultMessage": "Get started by creating your admin account."
 	},

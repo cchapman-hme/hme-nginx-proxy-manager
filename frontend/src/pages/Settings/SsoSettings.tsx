@@ -100,6 +100,9 @@ export default function SsoSettings() {
 						<Alert variant="warning" show>
 							<T id="settings.sso.save-warning" />
 						</Alert>
+						<Alert variant="info" show>
+							<T id="settings.sso.https-note" />
+						</Alert>
 
 						<div className="mb-3">
 							<label className="form-label">

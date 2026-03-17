@@ -163,6 +163,7 @@ const internalNginx = {
 						{ hsts_subdomains: host.hsts_subdomains },
 						{ access_list: host.access_list },
 						{ certificate: host.certificate },
+						{ sso_enabled: host.sso_enabled, sso_configured: host.sso_configured || false },
 						host.locations[i],
 					);
 
@@ -186,7 +187,7 @@ const internalNginx = {
 	 * @param   {Object}  host
 	 * @returns {Promise}
 	 */
-	generateConfig: (host_type, host_row) => {
+	generateConfig: (host_type, host_row, ssoContext = null) => {
 		// Prevent modifying the original object:
 		const host = JSON.parse(JSON.stringify(host_row));
 		const nice_host_type = internalNginx.getFileFriendlyHostType(host_type);
@@ -206,7 +207,6 @@ const internalNginx = {
 				return;
 			}
 
-			let locationsPromise;
 			let origLocations;
 
 			// Manipulate the data a bit before sending it to the template
@@ -222,48 +222,55 @@ const internalNginx = {
 				host.forward_scheme = "$scheme";
 			}
 
+			// Check for / in custom locations (sync — must happen before rendering)
 			if (host.locations) {
-				//logger.info ('host.locations = ' + JSON.stringify(host.locations, null, 2));
 				origLocations = [].concat(host.locations);
-				locationsPromise = internalNginx.renderLocations(host).then((renderedLocations) => {
-					host.locations = renderedLocations;
-				});
-
-				// Allow someone who is using / custom location path to use it, and skip the default / location
 				_.map(host.locations, (location) => {
 					if (location.path === "/") {
 						host.use_default_location = false;
 					}
 				});
-			} else {
-				locationsPromise = Promise.resolve();
 			}
 
 			// Set the IPv6 setting for the host
 			host.ipv6 = internalNginx.ipv6Enabled();
 
-			// SSO context for proxy hosts
+			// SSO context for proxy hosts — resolve FIRST so locations inherit SSO vars
 			let ssoPromise = Promise.resolve();
 			if (nice_host_type === "proxy_host") {
-				ssoPromise = settingModel.query().where("id", "like", "sso-%").then((ssoSettings) => {
-					const ssoMap = {};
-					for (const s of ssoSettings) {
-						ssoMap[s.id] = s.value;
-					}
-					host.sso_configured = !!(
-						ssoMap["sso-enabled"] === "true" &&
-						ssoMap["sso-tenant-id"] &&
-						ssoMap["sso-client-id"] &&
-						ssoMap["sso-client-secret"] &&
-						ssoMap["sso-cookie-domain"]
-					);
+				if (ssoContext) {
+					// Use prefetched context (bulk generation optimization — R5)
+					host.sso_configured = ssoContext.configured;
 					host.sso_redirect_host = host.domain_names?.[0] || "";
-				}).catch(() => {
-					host.sso_configured = false;
-				});
+				} else {
+					ssoPromise = settingModel.query().where("id", "like", "sso-%").then((ssoSettings) => {
+						const ssoMap = {};
+						for (const s of ssoSettings) {
+							ssoMap[s.id] = s.value;
+						}
+						host.sso_configured = !!(
+							ssoMap["sso-enabled"] === "true" &&
+							ssoMap["sso-tenant-id"] &&
+							ssoMap["sso-client-id"] &&
+							ssoMap["sso-client-secret"] &&
+							ssoMap["sso-cookie-domain"]
+						);
+						host.sso_redirect_host = host.domain_names?.[0] || "";
+					}).catch(() => {
+						host.sso_configured = false;
+					});
+				}
 			}
 
-			locationsPromise.then(() => ssoPromise).then(() => {
+			// After SSO context is resolved, render locations (they inherit SSO vars),
+			// then render the main template.
+			ssoPromise.then(() => {
+				if (host.locations) {
+					return internalNginx.renderLocations(host).then((renderedLocations) => {
+						host.locations = renderedLocations;
+					});
+				}
+			}).then(() => {
 				renderEngine
 					.parseAndRender(template, host)
 					.then((config_text) => {
@@ -413,13 +420,34 @@ const internalNginx = {
 	 * @returns {Promise}
 	 */
 	bulkGenerateConfigs: (hostType, hosts) => {
-		const promises = [];
-		hosts.map((host) => {
-			promises.push(internalNginx.generateConfig(hostType, host));
-			return true;
-		});
+		// For proxy hosts, prefetch SSO settings once instead of N queries
+		let ssoContextPromise = Promise.resolve(null);
+		if (hostType === "proxy_host") {
+			ssoContextPromise = settingModel.query().where("id", "like", "sso-%").then((ssoSettings) => {
+				const ssoMap = {};
+				for (const s of ssoSettings) {
+					ssoMap[s.id] = s.value;
+				}
+				return {
+					configured: !!(
+						ssoMap["sso-enabled"] === "true" &&
+						ssoMap["sso-tenant-id"] &&
+						ssoMap["sso-client-id"] &&
+						ssoMap["sso-client-secret"] &&
+						ssoMap["sso-cookie-domain"]
+					),
+				};
+			}).catch(() => ({ configured: false }));
+		}
 
-		return Promise.all(promises);
+		return ssoContextPromise.then((ssoContext) => {
+			const promises = [];
+			hosts.map((host) => {
+				promises.push(internalNginx.generateConfig(hostType, host, ssoContext));
+				return true;
+			});
+			return Promise.all(promises);
+		});
 	},
 
 	/**

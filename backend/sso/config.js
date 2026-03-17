@@ -3,6 +3,7 @@
 // SQLite-only for V1 — reads directly from the NPM database file.
 
 import Database from "better-sqlite3";
+import { parseGroups } from "./parse-groups.js";
 
 const DB_PATH = process.env.SSO_DB_PATH || "/data/database.sqlite";
 
@@ -82,15 +83,8 @@ export function loadHostGroups(hostname) {
 	}
 }
 
-function parseGroups(val) {
-	if (!val) return [];
-	try {
-		const parsed = JSON.parse(val);
-		return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
-	} catch (_err) {
-		return [];
-	}
-}
+// Re-export for backward compatibility
+export { parseGroups } from "./parse-groups.js";
 
 /**
  * Get cached config (call loadConfig first).

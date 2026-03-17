@@ -11,6 +11,7 @@ import { loadConfig, reloadConfig, getConfig, isConfigured, loadHostGroups } fro
 import { SsoSessionStore } from "./session-store.js";
 import { getAuthCodeUrl, acquireTokenByCode, resetClient } from "./msal-client.js";
 import { fetchUserGroups, isGroupMember } from "./group-check.js";
+import { validateReturnUrl } from "./validation.js";
 
 const app = express();
 const PORT = 3180;
@@ -170,24 +171,7 @@ app.get("/sso/callback", async (req, res) => {
 				req.session.cookie.domain = currentCfg.cookieDomain;
 			}
 
-			// Validate return URL
-			let safe = "/";
-			if (savedReturnUrl) {
-				if (savedReturnUrl.startsWith("/") && !savedReturnUrl.startsWith("//")) {
-					safe = savedReturnUrl;
-				} else {
-					try {
-						const parsed = new URL(savedReturnUrl);
-						const cookieDomain = (currentCfg.cookieDomain || "").replace(/^\./, "");
-						if (cookieDomain && (parsed.hostname === cookieDomain || parsed.hostname.endsWith("." + cookieDomain))) {
-							safe = savedReturnUrl;
-						}
-					} catch (_e) {
-						// Invalid URL — use default
-					}
-				}
-			}
-
+			const safe = validateReturnUrl(savedReturnUrl, currentCfg.cookieDomain);
 			req.session.save(() => res.redirect(safe));
 		});
 	} catch (err) {
