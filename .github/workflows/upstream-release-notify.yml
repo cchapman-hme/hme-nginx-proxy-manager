@@ -1,0 +1,138 @@
+name: Upstream Release Notification
+
+on:
+  schedule:
+    # Daily at 05:00 UTC (after sync-upstream)
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-release-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read current version
+        id: current
+        run: |
+          CURRENT=$(cat .version | tr -d '[:space:]')
+          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "Current fork version: $CURRENT"
+
+      - name: Get latest upstream release tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LATEST=$(gh api repos/NginxProxyManager/nginx-proxy-manager/releases/latest --jq '.tag_name' 2>/dev/null || echo "")
+          if [ -z "$LATEST" ]; then
+            echo "Could not fetch upstream release info."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Strip leading 'v' for comparison
+          LATEST_NUM=${LATEST#v}
+          echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "version=$LATEST_NUM" >> "$GITHUB_OUTPUT"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream release: $LATEST ($LATEST_NUM)"
+
+      - name: Compare versions
+        if: steps.upstream.outputs.found == 'true'
+        id: compare
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          UPSTREAM="${{ steps.upstream.outputs.version }}"
+          if [ "$CURRENT" = "$UPSTREAM" ]; then
+            echo "is_newer=false" >> "$GITHUB_OUTPUT"
+            echo "Already on latest upstream release ($CURRENT)."
+          else
+            # Use sort -V for version comparison
+            HIGHER=$(printf '%s\n%s' "$CURRENT" "$UPSTREAM" | sort -V | tail -1)
+            if [ "$HIGHER" = "$UPSTREAM" ]; then
+              echo "is_newer=true" >> "$GITHUB_OUTPUT"
+              echo "Upstream $UPSTREAM is newer than fork $CURRENT."
+            else
+              echo "is_newer=false" >> "$GITHUB_OUTPUT"
+              echo "Fork $CURRENT is >= upstream $UPSTREAM. No action needed."
+            fi
+          fi
+
+      - name: Check for existing notification issue
+        if: steps.compare.outputs.is_newer == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.upstream.outputs.tag }}"
+          EXISTING=$(gh issue list --label upstream-release --state open --search "Upstream release $TAG" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Issue #$EXISTING already tracks $TAG. Skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get upstream release notes
+        if: steps.compare.outputs.is_newer == 'true' && steps.existing.outputs.exists == 'false'
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.upstream.outputs.tag }}"
+          BODY=$(gh api "repos/NginxProxyManager/nginx-proxy-manager/releases/tags/$TAG" --jq '.body // "No release notes available."' 2>/dev/null | head -100)
+          # Write to file to avoid shell quoting issues
+          echo "$BODY" > /tmp/release-notes.txt
+
+      - name: Open notification issue
+        if: steps.compare.outputs.is_newer == 'true' && steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.upstream.outputs.tag }}"
+          UPSTREAM_VER="${{ steps.upstream.outputs.version }}"
+          CURRENT_VER="${{ steps.current.outputs.version }}"
+          NOTES=$(cat /tmp/release-notes.txt)
+
+          gh issue create \
+            --title "Upstream release $TAG available (current: v$CURRENT_VER)" \
+            --label upstream-release \
+            --body "## New Upstream Release: $TAG
+
+          A new version of [NginxProxyManager/nginx-proxy-manager](https://github.com/NginxProxyManager/nginx-proxy-manager) has been released.
+
+          | | Version |
+          |---|---|
+          | **Upstream** | $TAG |
+          | **Fork** | v$CURRENT_VER |
+
+          ### Upgrade Checklist
+
+          - [ ] Review [upstream release notes](https://github.com/NginxProxyManager/nginx-proxy-manager/releases/tag/$TAG)
+          - [ ] Check for breaking changes affecting our SSO customizations
+          - [ ] Test SSO sidecar compatibility with new version
+          - [ ] Merge upstream master into fork master
+          - [ ] Update \`.version\` file to \`$UPSTREAM_VER\`
+          - [ ] Build and test Docker image
+          - [ ] Deploy to staging
+          - [ ] Deploy to production
+
+          ### Upstream Release Notes
+          <details>
+          <summary>Click to expand</summary>
+
+          $NOTES
+
+          </details>
+
+          ---
+          *Created automatically by [upstream-release-notify.yml](../blob/develop/.github/workflows/upstream-release-notify.yml)*"

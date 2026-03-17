@@ -1,0 +1,182 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # Daily at 04:00 UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/NginxProxyManager/nginx-proxy-manager.git
+
+      - name: Fetch upstream develop
+        run: git fetch upstream develop
+
+      - name: Check for new commits
+        id: check
+        run: |
+          COMMIT_COUNT=$(git rev-list --count HEAD..upstream/develop)
+          echo "new_commits=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COMMIT_COUNT" -eq 0 ]; then
+            echo "No new upstream commits. Nothing to do."
+          else
+            echo "Found $COMMIT_COUNT new upstream commit(s)."
+          fi
+
+      - name: Attempt merge
+        if: steps.check.outputs.new_commits != '0'
+        id: merge
+        run: |
+          if git merge upstream/develop --no-edit; then
+            echo "merge_result=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "merge_result=conflict" >> "$GITHUB_OUTPUT"
+            git merge --abort
+          fi
+
+      - name: Push merged changes
+        if: steps.merge.outputs.merge_result == 'success'
+        id: push
+        run: |
+          if git push origin develop; then
+            echo "push_result=success" >> "$GITHUB_OUTPUT"
+            echo "Auto-merged and pushed upstream changes to develop."
+          else
+            echo "push_result=failed" >> "$GITHUB_OUTPUT"
+            echo "Direct push failed (branch protection?). Will create PR instead."
+          fi
+
+      # Fallback: if merge succeeded but push failed (branch protection),
+      # create a PR from a temporary branch
+      - name: Create PR branch (push fallback)
+        if: steps.merge.outputs.merge_result == 'success' && steps.push.outputs.push_result == 'failed'
+        run: |
+          BRANCH="upstream-sync/$(date +%Y-%m-%d)"
+          git checkout -b "$BRANCH"
+          git push origin "$BRANCH"
+          echo "SYNC_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: Check for existing sync PR (push fallback)
+        if: steps.merge.outputs.merge_result == 'success' && steps.push.outputs.push_result == 'failed'
+        id: existing_push_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh pr list --base develop --label upstream-sync --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Sync PR #$EXISTING already open. Skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open PR (push fallback)
+        if: steps.merge.outputs.merge_result == 'success' && steps.push.outputs.push_result == 'failed' && steps.existing_push_pr.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMIT_COUNT=${{ steps.check.outputs.new_commits }}
+          gh pr create \
+            --base develop \
+            --head "$SYNC_BRANCH" \
+            --title "Upstream sync: $COMMIT_COUNT commit(s) from NginxProxyManager/develop" \
+            --body "## Upstream Sync (auto-merged, push blocked)
+
+          Direct push to develop was blocked (likely branch protection).
+          This PR contains **$COMMIT_COUNT** upstream commit(s) that merged cleanly.
+
+          **Action:** Review and merge to sync with upstream.
+
+          ---
+          *Created automatically by [sync-upstream.yml](../blob/develop/.github/workflows/sync-upstream.yml)*" \
+            --label upstream-sync
+
+      # Conflict path: create a branch with upstream changes for manual resolution
+      - name: Create conflict PR branch
+        if: steps.merge.outputs.merge_result == 'conflict'
+        run: |
+          BRANCH="upstream-sync/$(date +%Y-%m-%d)"
+          git checkout -b "$BRANCH"
+          git merge upstream/develop --no-commit --no-ff || true
+          # Capture conflicting files for the PR body
+          CONFLICTS=$(git diff --name-only --diff-filter=U | head -20)
+          echo "CONFLICTS<<EOF" >> "$GITHUB_ENV"
+          echo "$CONFLICTS" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+          echo "SYNC_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+          # Abort and just push the upstream content as-is for comparison
+          git merge --abort
+          git reset --hard upstream/develop
+          git push origin "$BRANCH" --force
+
+      - name: Check for existing conflict PR
+        if: steps.merge.outputs.merge_result == 'conflict'
+        id: existing_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh pr list --base develop --label upstream-sync --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Sync PR #$EXISTING already open. Skipping new PR."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open conflict PR
+        if: steps.merge.outputs.merge_result == 'conflict' && steps.existing_pr.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMIT_COUNT=${{ steps.check.outputs.new_commits }}
+          gh pr create \
+            --base develop \
+            --head "$SYNC_BRANCH" \
+            --title "Upstream sync: merge conflicts need resolution ($COMMIT_COUNT commits)" \
+            --body "## Upstream Sync — Merge Conflicts
+
+          Automatic merge of **$COMMIT_COUNT** upstream commit(s) failed due to conflicts.
+
+          ### Conflicting files:
+          \`\`\`
+          ${{ env.CONFLICTS }}
+          \`\`\`
+
+          ### How to resolve:
+          \`\`\`bash
+          git fetch origin $SYNC_BRANCH
+          git checkout develop
+          git merge origin/$SYNC_BRANCH
+          # Resolve conflicts in your editor
+          git add .
+          git commit
+          git push origin develop
+          \`\`\`
+
+          ---
+          *Created automatically by [sync-upstream.yml](../blob/develop/.github/workflows/sync-upstream.yml)*" \
+            --label upstream-sync \
+            --label needs-review
