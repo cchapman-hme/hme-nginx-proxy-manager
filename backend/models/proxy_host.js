@@ -22,6 +22,7 @@ const boolFields = [
 	"hsts_enabled",
 	"hsts_subdomains",
 	"trust_forwarded_proto",
+	"sso_enabled",
 ];
 
 class ProxyHost extends Model {
@@ -70,7 +71,7 @@ class ProxyHost extends Model {
 	}
 
 	static get jsonAttributes() {
-		return ["domain_names", "meta", "locations"];
+		return ["domain_names", "meta", "locations", "sso_forced_groups"];
 	}
 
 	static get defaultAllowGraph() {
