@@ -41,12 +41,12 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		setIsSubmitting(true);
 		setErrorMsg(null);
 
-		const { ssoForcedGroups, ...rest } = values;
+		const { ssoAllowedGroups, ...rest } = values;
 		const payload = {
 			id: id === "new" ? undefined : id,
 			...rest,
-			ssoForcedGroups: ssoForcedGroups
-				? ssoForcedGroups.split(",").map((s: string) => s.trim()).filter(Boolean)
+			ssoAllowedGroups: ssoAllowedGroups
+				? ssoAllowedGroups.split(",").map((s: string) => s.trim()).filter(Boolean)
 				: null,
 		};
 
@@ -93,9 +93,13 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 							hstsEnabled: data?.hstsEnabled || false,
 							hstsSubdomains: data?.hstsSubdomains || false,
 							trustForwardedProto: data?.trustForwardedProto || false,
-							// SSO
-							ssoEnabled: data?.ssoEnabled ?? true,
-							ssoForcedGroups: data?.ssoForcedGroups ? data.ssoForcedGroups.join(", ") : "",
+							// SSO tab
+							ssoEnabled: data?.ssoEnabled ?? false,
+							ssoTenantId: data?.ssoTenantId || "",
+							ssoClientId: data?.ssoClientId || "",
+							ssoClientSecret: data?.ssoClientSecret || "",
+							ssoCookieDomain: data?.ssoCookieDomain || "",
+							ssoAllowedGroups: data?.ssoAllowedGroups ? data.ssoAllowedGroups.join(", ") : "",
 							// Advanced tab
 							advancedConfig: data?.advancedConfig || "",
 							meta: data?.meta || {},
@@ -103,7 +107,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 					}
 					onSubmit={onSubmit}
 				>
-					{() => (
+					{({ values }) => (
 						<Form>
 							<Modal.Header closeButton>
 								<Modal.Title>
@@ -150,6 +154,11 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 													role="tab"
 												>
 													<T id="column.ssl" />
+												</a>
+											</li>
+											<li className="nav-item" role="presentation">
+												<a className="nav-link" href="#tab-sso" data-bs-toggle="tab" role="tab">
+													SSO
 												</a>
 											</li>
 											<li className="nav-item ms-auto" role="presentation">
@@ -335,45 +344,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 																</span>
 															</label>
 														</div>
-														<div>
-															<label className="row" htmlFor="ssoEnabled">
-																<span className="col">
-																	<T id="host.sso-enabled" />
-																</span>
-																<span className="col-auto">
-																	<Field name="ssoEnabled" type="checkbox">
-																		{({ field }: any) => (
-																			<label className="form-check form-check-single form-switch">
-																				<input
-																					{...field}
-																					id="ssoEnabled"
-																					className={cn("form-check-input", {
-																						"bg-lime": field.checked,
-																					})}
-																					type="checkbox"
-																				/>
-																			</label>
-																		)}
-																	</Field>
-																</span>
-															</label>
 														</div>
-													</div>
-													<div className="mb-3 mt-2">
-														<label className="form-label" htmlFor="ssoForcedGroups">
-															<T id="host.sso-forced-groups" />
-														</label>
-														<Field
-															name="ssoForcedGroups"
-															type="text"
-															className="form-control"
-															id="ssoForcedGroups"
-															placeholder="Leave empty for global default"
-														/>
-														<small className="form-hint">
-															<T id="host.sso-forced-groups.description" />
-														</small>
-													</div>
 												</div>
 											</div>
 											<div className="tab-pane" id="tab-locations" role="tabpanel">
@@ -387,7 +358,123 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 												/>
 												<SSLOptionsFields color="bg-lime" forProxyHost={true} />
 											</div>
-											<div className="tab-pane" id="tab-advanced" role="tabpanel">
+											<div className="tab-pane" id="tab-sso" role="tabpanel">
+											<div className="mb-3">
+												<Field name="ssoEnabled" type="checkbox">
+													{({ field }: any) => (
+														<label className="form-check form-switch">
+															<input
+																{...field}
+																id="ssoEnabled"
+																className={cn("form-check-input", {
+																	"bg-lime": field.checked,
+																})}
+																type="checkbox"
+															/>
+															<span className="form-check-label">
+																<T id="host.sso-enabled" />
+															</span>
+														</label>
+													)}
+												</Field>
+												<small className="form-hint">
+													<T id="host.sso-enabled.description" />
+												</small>
+											</div>
+
+											{values.ssoEnabled && (
+												<>
+													<div className="mb-3">
+														<label className="form-label">
+															<T id="host.sso.redirect-uri" />
+														</label>
+														<input
+															className="form-control"
+															readOnly
+															value={
+																values.domainNames?.[0]
+																	? `https://${values.domainNames[0]}/sso/callback`
+																	: "Set a domain name first"
+															}
+														/>
+														<small className="form-hint">
+															<T id="host.sso.redirect-uri.description" />
+														</small>
+													</div>
+
+													<div className="mb-3">
+														<label className="form-label" htmlFor="ssoTenantId">
+															<T id="host.sso.tenant-id" />
+														</label>
+														<Field
+															name="ssoTenantId"
+															type="text"
+															className="form-control"
+															id="ssoTenantId"
+															placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+														/>
+													</div>
+
+													<div className="mb-3">
+														<label className="form-label" htmlFor="ssoClientId">
+															<T id="host.sso.client-id" />
+														</label>
+														<Field
+															name="ssoClientId"
+															type="text"
+															className="form-control"
+															id="ssoClientId"
+															placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+														/>
+													</div>
+
+													<div className="mb-3">
+														<label className="form-label" htmlFor="ssoClientSecret">
+															<T id="host.sso.client-secret" />
+														</label>
+														<Field
+															name="ssoClientSecret"
+															type="password"
+															className="form-control"
+															id="ssoClientSecret"
+														/>
+													</div>
+
+													<div className="mb-3">
+														<label className="form-label" htmlFor="ssoCookieDomain">
+															<T id="host.sso.cookie-domain" />
+														</label>
+														<Field
+															name="ssoCookieDomain"
+															type="text"
+															className="form-control"
+															id="ssoCookieDomain"
+															placeholder=".example.com"
+														/>
+														<small className="form-hint">
+															<T id="host.sso.cookie-domain.description" />
+														</small>
+													</div>
+
+													<div className="mb-3">
+														<label className="form-label" htmlFor="ssoAllowedGroups">
+															<T id="host.sso.allowed-groups" />
+														</label>
+														<Field
+															name="ssoAllowedGroups"
+															type="text"
+															className="form-control"
+															id="ssoAllowedGroups"
+															placeholder="group-id-1, group-id-2"
+														/>
+														<small className="form-hint">
+															<T id="host.sso.allowed-groups.description" />
+														</small>
+													</div>
+												</>
+											)}
+										</div>
+										<div className="tab-pane" id="tab-advanced" role="tabpanel">
 												<NginxConfigField />
 											</div>
 										</div>

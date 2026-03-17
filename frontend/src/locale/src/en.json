@@ -449,11 +449,32 @@
 	"host.sso-enabled.description": {
 		"defaultMessage": "Require Azure AD SSO authentication for this proxy host"
 	},
-	"host.sso-forced-groups": {
+	"host.sso.tenant-id": {
+		"defaultMessage": "Azure AD Tenant ID"
+	},
+	"host.sso.client-id": {
+		"defaultMessage": "Azure AD Client ID"
+	},
+	"host.sso.client-secret": {
+		"defaultMessage": "Azure AD Client Secret"
+	},
+	"host.sso.cookie-domain": {
+		"defaultMessage": "Cookie Domain"
+	},
+	"host.sso.cookie-domain.description": {
+		"defaultMessage": "Hosts sharing the same cookie domain share SSO sessions"
+	},
+	"host.sso.allowed-groups": {
 		"defaultMessage": "Required Azure AD Groups"
 	},
-	"host.sso-forced-groups.description": {
-		"defaultMessage": "Comma-separated Azure AD group IDs. Leave empty to use global default."
+	"host.sso.allowed-groups.description": {
+		"defaultMessage": "Comma-separated Azure AD group IDs (at least one required when SSO is enabled)"
+	},
+	"host.sso.redirect-uri": {
+		"defaultMessage": "Redirect URI (auto-generated)"
+	},
+	"host.sso.redirect-uri.description": {
+		"defaultMessage": "Register this URI in your Azure AD App Registration"
 	},
 	"hosts": {
 		"defaultMessage": "Hosts"
@@ -695,32 +716,14 @@
 	"settings.sso": {
 		"defaultMessage": "Azure SSO"
 	},
-	"settings.sso.description": {
-		"defaultMessage": "Configure Azure AD Single Sign-On for proxy hosts"
-	},
-	"settings.sso.tenant-id": {
-		"defaultMessage": "Tenant ID"
-	},
-	"settings.sso.client-id": {
-		"defaultMessage": "Client ID"
-	},
-	"settings.sso.client-secret": {
-		"defaultMessage": "Client Secret"
-	},
-	"settings.sso.cookie-domain": {
-		"defaultMessage": "Cookie Domain"
-	},
-	"settings.sso.redirect-uri": {
-		"defaultMessage": "Redirect URI"
-	},
-	"settings.sso.allowed-groups": {
-		"defaultMessage": "Allowed Groups (comma-separated Azure AD Group IDs)"
+	"settings.sso.per-host-info": {
+		"defaultMessage": "SSO is configured per proxy host. Use this toggle as a global kill switch to disable SSO across all hosts."
 	},
 	"settings.sso.enabled": {
 		"defaultMessage": "Enable Azure SSO"
 	},
-	"settings.sso.enabled.description": {
-		"defaultMessage": "When enabled, all proxy hosts require Azure AD SSO authentication by default"
+	"settings.sso.killswitch.description": {
+		"defaultMessage": "When disabled, no proxy host will use SSO regardless of its per-host settings"
 	},
 	"settings.sso.save-warning": {
 		"defaultMessage": "Saving will regenerate all proxy host nginx configs."
