@@ -36,6 +36,17 @@ jobs:
           yarn locale-compile
           yarn build
 
+      - name: Verify frontend build output
+        run: |
+          echo "=== frontend/dist contents ==="
+          find frontend/dist -type f | head -50
+          echo "=== index.html head ==="
+          head -30 frontend/dist/index.html
+          echo "=== CSS files ==="
+          find frontend/dist -name "*.css" -type f
+          echo "=== JS files ==="
+          find frontend/dist -name "*.js" -type f
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
