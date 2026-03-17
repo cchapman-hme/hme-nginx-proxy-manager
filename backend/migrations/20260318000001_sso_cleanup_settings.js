@@ -1,13 +1,23 @@
-export const up = async function (knex) {
+import { migrate as logger } from "../logger.js";
+
+const migrateName = "sso_cleanup_settings";
+
+const up = async function (knex) {
+	logger.info(`[${migrateName}] Migrating Up...`);
+
 	// Remove orphaned global SSO settings that were migrated to per-host columns.
 	// Only sso-enabled (the global kill switch) is retained.
 	await knex("setting")
 		.whereNot("id", "sso-enabled")
 		.andWhere("id", "like", "sso-%")
 		.del();
+
+	logger.info(`[${migrateName}] Orphaned SSO settings removed`);
 };
 
-export const down = async function (knex) {
+const down = async function (knex) {
+	logger.info(`[${migrateName}] Migrating Down...`);
+
 	// Re-create the removed settings with sensible defaults.
 	// These were the original global SSO configuration settings.
 	const settings = [
@@ -25,4 +35,8 @@ export const down = async function (knex) {
 			await knex("setting").insert(setting);
 		}
 	}
+
+	logger.info(`[${migrateName}] SSO settings restored`);
 };
+
+export { up, down };

@@ -119,7 +119,7 @@ app.get("/sso/login", async (req, res) => {
 	const returnUrl = req.query.return || "/";
 	const state = randomUUID();
 	req.session.oauthState = state;
-	req.session.returnUrl = returnUrl;
+	req.session.returnUrl = validateReturnUrl(returnUrl, hostCfg.cookieDomain);
 
 	// Set cookie domain for SSO session sharing
 	if (hostCfg.cookieDomain) {
@@ -208,9 +208,14 @@ app.get("/sso/logout", async (req, res) => {
 	const hostCfg = await loadHostConfig(originalHost);
 	req.session.destroy(() => {
 		if (hostCfg?.tenantId) {
-			const postLogoutUri = req.query.return || `${req.protocol}://${originalHost}/`;
+			const rawReturn = req.query.return || `${req.protocol}://${originalHost}/`;
+			const postLogoutUri = validateReturnUrl(rawReturn, hostCfg?.cookieDomain || "");
+			// If validateReturnUrl fell back to "/", build an absolute URL for Azure AD
+			const absoluteUri = postLogoutUri.startsWith("http")
+				? postLogoutUri
+				: `${req.protocol}://${originalHost}${postLogoutUri}`;
 			res.redirect(
-				`https://login.microsoftonline.com/${hostCfg.tenantId}/oauth2/v2.0/logout?post_logout_redirect_uri=${encodeURIComponent(postLogoutUri)}`
+				`https://login.microsoftonline.com/${hostCfg.tenantId}/oauth2/v2.0/logout?post_logout_redirect_uri=${encodeURIComponent(absoluteUri)}`
 			);
 		} else {
 			res.redirect("/");

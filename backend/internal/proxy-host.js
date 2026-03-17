@@ -1,6 +1,7 @@
 import _ from "lodash";
 import errs from "../lib/error.js";
 import { castJsonIfNeed } from "../lib/helpers.js";
+import { validateSsoFields as _validateSsoFields, hasSsoRelevantChanges } from "../lib/sso-helpers.js";
 import utils from "../lib/utils.js";
 import logger from "../logger.js";
 import proxyHostModel from "../models/proxy_host.js";
@@ -21,8 +22,30 @@ function notifySsoSidecar() {
 	);
 }
 
+/**
+ * Validate SSO fields, throwing a ValidationError on failure.
+ * Wraps the pure function from lib/sso-helpers.js.
+ * @param {Object} data
+ * @throws {errs.ValidationError}
+ */
+function validateSsoFields(data) {
+	const result = _validateSsoFields(data);
+	if (!result.valid) {
+		throw new errs.ValidationError(
+			`SSO is enabled but the following fields are required: ${result.missing.join(", ")}`,
+		);
+	}
+}
+
 const omissions = () => {
-	return ["is_deleted", "owner.is_deleted"];
+	return ["is_deleted", "owner.is_deleted", "sso_client_secret"];
+};
+
+/**
+ * Sensitive fields to strip from audit log meta in addition to standard omissions.
+ */
+const auditOmissions = () => {
+	return [...omissions(), "sso_client_secret"];
 };
 
 const internalProxyHost = {
@@ -64,6 +87,9 @@ const internalProxyHost = {
 				thisData.owner_user_id = access.token.getUserId(1);
 				thisData = internalHost.cleanSslHstsData(thisData);
 
+				// Validate SSO fields if SSO is being enabled
+				validateSsoFields(thisData);
+
 				// Fix for db field not having a default value
 				// for this optional field.
 				if (typeof thisData.advanced_config === "undefined") {
@@ -99,7 +125,8 @@ const internalProxyHost = {
 			.then((row) => {
 				// Configure nginx
 				return internalNginx.configure(proxyHostModel, "proxy_host", row).then(() => {
-					return notifySsoSidecar().then(() => row);
+					const notify = hasSsoRelevantChanges(thisData) ? notifySsoSidecar() : Promise.resolve();
+					return notify.then(() => row);
 				});
 			})
 			.then((row) => {
@@ -112,7 +139,7 @@ const internalProxyHost = {
 						action: "created",
 						object_type: "proxy-host",
 						object_id: row.id,
-						meta: thisData,
+						meta: _.omit(thisData, auditOmissions()),
 					})
 					.then(() => {
 						return row;
@@ -196,6 +223,10 @@ const internalProxyHost = {
 
 				thisData = internalHost.cleanSslHstsData(thisData, row);
 
+				// Validate SSO fields: merge existing row with update data to check completeness
+				const mergedForValidation = _.assign({}, row, thisData);
+				validateSsoFields(mergedForValidation);
+
 				return proxyHostModel
 					.query()
 					.where({ id: thisData.id })
@@ -208,7 +239,7 @@ const internalProxyHost = {
 								action: "updated",
 								object_type: "proxy-host",
 								object_id: row.id,
-								meta: thisData,
+								meta: _.omit(thisData, auditOmissions()),
 							})
 							.then(() => {
 								return saved_row;
@@ -229,7 +260,8 @@ const internalProxyHost = {
 						// Configure nginx
 						return internalNginx.configure(proxyHostModel, "proxy_host", row).then((new_meta) => {
 							row.meta = new_meta;
-							return notifySsoSidecar().then(() =>
+							const notify = hasSsoRelevantChanges(data) ? notifySsoSidecar() : Promise.resolve();
+							return notify.then(() =>
 								_.omit(internalHost.cleanRowCertificateMeta(row), omissions()),
 							);
 						});
@@ -316,7 +348,7 @@ const internalProxyHost = {
 							action: "deleted",
 							object_type: "proxy-host",
 							object_id: row.id,
-							meta: _.omit(row, omissions()),
+							meta: _.omit(row, auditOmissions()),
 						});
 					});
 			})
@@ -368,7 +400,7 @@ const internalProxyHost = {
 							action: "enabled",
 							object_type: "proxy-host",
 							object_id: row.id,
-							meta: _.omit(row, omissions()),
+							meta: _.omit(row, auditOmissions()),
 						});
 					});
 			})
@@ -418,7 +450,7 @@ const internalProxyHost = {
 							action: "disabled",
 							object_type: "proxy-host",
 							object_id: row.id,
-							meta: _.omit(row, omissions()),
+							meta: _.omit(row, auditOmissions()),
 						});
 					});
 			})

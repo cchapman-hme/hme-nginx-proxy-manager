@@ -1,4 +1,10 @@
-exports.up = function (knex) {
+import { migrate as logger } from "../logger.js";
+
+const migrateName = "sso_per_host";
+
+const up = function (knex) {
+  logger.info(`[${migrateName}] Migrating Up...`);
+
   return knex.schema.alterTable("proxy_host", (table) => {
     // New per-host SSO columns
     table.string("sso_tenant_id", 255).defaultTo("").notNullable();
@@ -19,10 +25,14 @@ exports.up = function (knex) {
     return knex.schema.alterTable("proxy_host", (table) => {
       table.dropColumn("sso_forced_groups");
     });
+  }).then(() => {
+    logger.info(`[${migrateName}] proxy_host Table altered`);
   });
 };
 
-exports.down = function (knex) {
+const down = function (knex) {
+  logger.info(`[${migrateName}] Migrating Down...`);
+
   return knex.schema.alterTable("proxy_host", (table) => {
     table.text("sso_forced_groups").nullable().defaultTo(null);
   }).then(() => {
@@ -39,5 +49,9 @@ exports.down = function (knex) {
       table.dropColumn("sso_cookie_domain");
       table.dropColumn("sso_allowed_groups");
     });
+  }).then(() => {
+    logger.info(`[${migrateName}] proxy_host Table restored`);
   });
 };
+
+export { up, down };

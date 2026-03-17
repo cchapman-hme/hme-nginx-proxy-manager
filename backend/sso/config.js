@@ -17,6 +17,13 @@ let _mysqlPool = null;
 let _config = null;
 
 // ---------------------------------------------------------------------------
+// Host config cache — maps hostname → config object.
+// Cleared on reloadConfig(), TTL prevents stale reads between reloads.
+// ---------------------------------------------------------------------------
+const _hostCache = new Map();
+const HOST_CACHE_TTL_MS = 30_000; // 30 seconds
+
+// ---------------------------------------------------------------------------
 // SQLite backend (lazy import — only loaded when USE_MYSQL is false)
 // ---------------------------------------------------------------------------
 async function getSqliteDb() {
@@ -110,12 +117,18 @@ export async function loadGlobalConfig() {
 
 /**
  * Load per-host SSO configuration from the proxy_host table.
- * Queries all SSO-enabled hosts and matches by hostname via JSON parsing
- * (avoids unreliable SQL LIKE on JSON arrays).
+ * Results are cached for HOST_CACHE_TTL_MS to avoid querying on every auth_request.
+ * Cache is cleared on reloadConfig().
  * @param {string} hostname - The hostname to look up
  * @returns {Promise<{ tenantId: string, clientId: string, clientSecret: string, cookieDomain: string, allowedGroups: string[], redirectUri: string } | null>}
  */
 export async function loadHostConfig(hostname) {
+	// Check cache first
+	const cached = _hostCache.get(hostname);
+	if (cached && Date.now() - cached.ts < HOST_CACHE_TTL_MS) {
+		return cached.value;
+	}
+
 	try {
 		const rows = await query(
 			"SELECT domain_names, sso_enabled, sso_tenant_id, sso_client_id, " +
@@ -125,7 +138,7 @@ export async function loadHostConfig(hostname) {
 		for (const row of rows) {
 			const domains = JSON.parse(row.domain_names || "[]");
 			if (domains.includes(hostname)) {
-				return {
+				const result = {
 					tenantId: row.sso_tenant_id || "",
 					clientId: row.sso_client_id || "",
 					clientSecret: row.sso_client_secret || "",
@@ -133,8 +146,11 @@ export async function loadHostConfig(hostname) {
 					allowedGroups: parseGroups(row.sso_allowed_groups),
 					redirectUri: `https://${domains[0]}/sso/callback`,
 				};
+				_hostCache.set(hostname, { value: result, ts: Date.now() });
+				return result;
 			}
 		}
+		_hostCache.set(hostname, { value: null, ts: Date.now() });
 		return null;
 	} catch (err) {
 		console.error("[sso] Failed to load host config:", err.message);
@@ -160,6 +176,7 @@ export function getGlobalConfig() {
  */
 export async function reloadConfig() {
 	_config = null;
+	_hostCache.clear();
 	// Close SQLite handle if open so it picks up fresh data
 	if (_sqliteDb) {
 		_sqliteDb.close();
