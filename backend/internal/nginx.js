@@ -235,25 +235,26 @@ const internalNginx = {
 			// Set the IPv6 setting for the host
 			host.ipv6 = internalNginx.ipv6Enabled();
 
-			// SSO context for proxy hosts — resolve FIRST so locations inherit SSO vars
+			// SSO context for proxy hosts — derive from per-host columns
 			let ssoPromise = Promise.resolve();
 			if (nice_host_type === "proxy_host") {
 				if (ssoContext) {
-					// Use prefetched context (bulk generation optimization — R5)
-					host.sso_configured = ssoContext.configured;
+					// Use prefetched context (bulk generation optimization)
+					host.sso_configured = ssoContext.globalEnabled && host.sso_enabled && !!(
+						host.sso_tenant_id &&
+						host.sso_client_id &&
+						host.sso_client_secret &&
+						host.sso_cookie_domain
+					);
 					host.sso_redirect_host = host.domain_names?.[0] || "";
 				} else {
-					ssoPromise = settingModel.query().where("id", "like", "sso-%").then((ssoSettings) => {
-						const ssoMap = {};
-						for (const s of ssoSettings) {
-							ssoMap[s.id] = s.value;
-						}
-						host.sso_configured = !!(
-							ssoMap["sso-enabled"] === "true" &&
-							ssoMap["sso-tenant-id"] &&
-							ssoMap["sso-client-id"] &&
-							ssoMap["sso-client-secret"] &&
-							ssoMap["sso-cookie-domain"]
+					ssoPromise = settingModel.query().where("id", "sso-enabled").first().then((row) => {
+						const globalEnabled = row?.value === "true";
+						host.sso_configured = globalEnabled && host.sso_enabled && !!(
+							host.sso_tenant_id &&
+							host.sso_client_id &&
+							host.sso_client_secret &&
+							host.sso_cookie_domain
 						);
 						host.sso_redirect_host = host.domain_names?.[0] || "";
 					}).catch(() => {
@@ -420,24 +421,14 @@ const internalNginx = {
 	 * @returns {Promise}
 	 */
 	bulkGenerateConfigs: (hostType, hosts) => {
-		// For proxy hosts, prefetch SSO settings once instead of N queries
+		// For proxy hosts, prefetch only the global SSO kill switch
 		let ssoContextPromise = Promise.resolve(null);
 		if (hostType === "proxy_host") {
-			ssoContextPromise = settingModel.query().where("id", "like", "sso-%").then((ssoSettings) => {
-				const ssoMap = {};
-				for (const s of ssoSettings) {
-					ssoMap[s.id] = s.value;
-				}
+			ssoContextPromise = settingModel.query().where("id", "sso-enabled").first().then((row) => {
 				return {
-					configured: !!(
-						ssoMap["sso-enabled"] === "true" &&
-						ssoMap["sso-tenant-id"] &&
-						ssoMap["sso-client-id"] &&
-						ssoMap["sso-client-secret"] &&
-						ssoMap["sso-cookie-domain"]
-					),
+					globalEnabled: row?.value === "true",
 				};
-			}).catch(() => ({ configured: false }));
+			}).catch(() => ({ globalEnabled: false }));
 		}
 
 		return ssoContextPromise.then((ssoContext) => {

@@ -2,11 +2,24 @@ import _ from "lodash";
 import errs from "../lib/error.js";
 import { castJsonIfNeed } from "../lib/helpers.js";
 import utils from "../lib/utils.js";
+import logger from "../logger.js";
 import proxyHostModel from "../models/proxy_host.js";
 import internalAuditLog from "./audit-log.js";
 import internalCertificate from "./certificate.js";
 import internalHost from "./host.js";
 import internalNginx from "./nginx.js";
+
+/**
+ * Notify the SSO sidecar to reload its config after proxy host changes.
+ * Fire-and-forget — logs a warning if the sidecar is unreachable.
+ */
+function notifySsoSidecar() {
+	return fetch("http://127.0.0.1:3180/sso/reload", { method: "POST" }).catch(
+		(err) => {
+			logger.warn(`[proxy-host] SSO sidecar notification failed: ${err.message}`);
+		},
+	);
+}
 
 const omissions = () => {
 	return ["is_deleted", "owner.is_deleted"];
@@ -86,7 +99,7 @@ const internalProxyHost = {
 			.then((row) => {
 				// Configure nginx
 				return internalNginx.configure(proxyHostModel, "proxy_host", row).then(() => {
-					return row;
+					return notifySsoSidecar().then(() => row);
 				});
 			})
 			.then((row) => {
@@ -216,7 +229,9 @@ const internalProxyHost = {
 						// Configure nginx
 						return internalNginx.configure(proxyHostModel, "proxy_host", row).then((new_meta) => {
 							row.meta = new_meta;
-							return _.omit(internalHost.cleanRowCertificateMeta(row), omissions());
+							return notifySsoSidecar().then(() =>
+								_.omit(internalHost.cleanRowCertificateMeta(row), omissions()),
+							);
 						});
 					});
 			});
@@ -291,9 +306,9 @@ const internalProxyHost = {
 					})
 					.then(() => {
 						// Delete Nginx Config
-						return internalNginx.deleteConfig("proxy_host", row).then(() => {
-							return internalNginx.reload();
-						});
+						return internalNginx.deleteConfig("proxy_host", row)
+							.then(() => notifySsoSidecar())
+							.then(() => internalNginx.reload());
 					})
 					.then(() => {
 						// Add to audit log
@@ -344,7 +359,8 @@ const internalProxyHost = {
 					})
 					.then(() => {
 						// Configure nginx
-						return internalNginx.configure(proxyHostModel, "proxy_host", row);
+						return internalNginx.configure(proxyHostModel, "proxy_host", row)
+							.then(() => notifySsoSidecar());
 					})
 					.then(() => {
 						// Add to audit log
@@ -392,9 +408,9 @@ const internalProxyHost = {
 					})
 					.then(() => {
 						// Delete Nginx Config
-						return internalNginx.deleteConfig("proxy_host", row).then(() => {
-							return internalNginx.reload();
-						});
+						return internalNginx.deleteConfig("proxy_host", row)
+							.then(() => notifySsoSidecar())
+							.then(() => internalNginx.reload());
 					})
 					.then(() => {
 						// Add to audit log

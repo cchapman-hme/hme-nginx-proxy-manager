@@ -69,8 +69,8 @@ const internalSetting = {
 						});
 				}
 
-				// When SSO master switch changes, regenerate all proxy host configs
-				// (frontend saves sso-enabled LAST, so all other sso-* values are already committed)
+				// SSO kill switch: regenerate all proxy host configs so each host's
+				// per-host SSO columns are re-evaluated against the new global state
 				if (row.id === "sso-enabled") {
 					const proxyHostModel = (await import("../models/proxy_host.js")).default;
 					const hosts = await proxyHostModel

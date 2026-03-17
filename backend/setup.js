@@ -98,42 +98,29 @@ const setupDefaultSettings = async () => {
 };
 
 /**
- * Creates default SSO settings if they don't already exist in the database
+ * Creates the SSO kill-switch setting if it doesn't already exist.
+ * Per-host SSO config (tenant, client, secret, etc.) is stored
+ * in the proxy_host table — only the global toggle lives here.
  *
  * @returns {Promise}
  */
-const setupSsoSettings = async () => {
-	const ssoSettings = [
-		{ id: "sso-enabled", name: "SSO Enabled", description: "Enable or disable SSO authentication", value: "false" },
-		{ id: "sso-tenant-id", name: "SSO Tenant ID", description: "Azure AD tenant ID for SSO", value: "" },
-		{ id: "sso-client-id", name: "SSO Client ID", description: "OAuth2 client ID for SSO", value: "" },
-		{ id: "sso-client-secret", name: "SSO Client Secret", description: "OAuth2 client secret for SSO", value: "" },
-		{ id: "sso-cookie-domain", name: "SSO Cookie Domain", description: "Domain for SSO authentication cookies", value: "" },
-		{ id: "sso-redirect-uri", name: "SSO Redirect URI", description: "OAuth2 redirect URI for SSO callback", value: "" },
-		{ id: "sso-allowed-groups", name: "SSO Allowed Groups", description: "JSON array of allowed SSO group IDs", value: "[]" },
-	];
-
-	for (const setting of ssoSettings) {
-		const row = await settingModel
-			.query()
-			.select("id")
-			.where({ id: setting.id })
-			.first();
-
-		if (!row?.id) {
-			await settingModel
-				.query()
-				.insert({
-					id: setting.id,
-					name: setting.name,
-					description: setting.description,
-					value: setting.value,
+const setupSsoSettings = () => {
+	return settingModel
+		.query()
+		.select(settingModel.raw("COUNT(`id`) as `count`"))
+		.where("id", "sso-enabled")
+		.first()
+		.then((row) => {
+			if (!row.count) {
+				return settingModel.query().insert({
+					id: "sso-enabled",
+					name: "Azure SSO Kill Switch",
+					description: "Global on/off for Azure SSO across all proxy hosts",
+					value: "false",
 					meta: {},
 				});
-		}
-	}
-
-	logger.info("SSO settings initialized");
+			}
+		});
 };
 
 /**
