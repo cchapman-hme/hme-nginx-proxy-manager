@@ -1,0 +1,41 @@
+version: '3'
+services:
+  app:
+    image: 'jc21/nginx-proxy-manager:latest'
+    restart: unless-stopped
+    ports:
+      - '80:80' # Public HTTP Port
+      - '443:443' # Public HTTPS Port
+      - '81:81' # Admin Web Port
+    environment:
+      DB_MYSQL_HOST: "db"
+      DB_MYSQL_PORT: 3306
+      DB_MYSQL_USER: "npm"
+      DB_MYSQL_PASSWORD: "5^Jpe4cldSn6"
+      DB_MYSQL_NAME: "npm"
+      DISABLE_IPV6: 'true'
+    volumes:
+      - /var/docker/nginx-proxy-manager/data:/data
+      - /var/docker/nginx-proxy-manager/letsencrypt:/etc/letsencrypt
+    depends_on:
+      - db
+    networks:
+      - npm-network
+
+  db:
+    image: 'jc21/mariadb-aria:latest'
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: 'npm'
+      MYSQL_DATABASE: 'npm'
+      MYSQL_USER: 'npm'
+      MYSQL_PASSWORD: '5^Jpe4cldSn6'
+      MARIADB_AUTO_UPGRADE: '1'
+    volumes:
+      - /var/docker/nginx-proxy-manager/mysql:/var/lib/mysql
+    networks:
+      - npm-network
+
+networks:
+  npm-network:
+    driver: bridge
