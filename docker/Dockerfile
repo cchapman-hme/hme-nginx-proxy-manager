@@ -43,6 +43,8 @@ WORKDIR /app
 RUN yarn install \
 	&& yarn cache clean
 
+RUN cd /app/sso && npm install --production && npm cache clean --force
+
 # add late to limit cache-busting by modifications
 COPY docker/rootfs /
 COPY --from=testca /home/step/certs/root_ca.crt /etc/ssl/certs/NginxProxyManager.crt
