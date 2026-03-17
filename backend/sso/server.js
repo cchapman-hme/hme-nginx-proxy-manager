@@ -163,8 +163,24 @@ app.get("/sso/callback", async (req, res) => {
 		const returnUrl = req.session.returnUrl || "/";
 		delete req.session.returnUrl;
 
-		// Validate return URL (must start with /, not //)
-		const safe = returnUrl.startsWith("/") && !returnUrl.startsWith("//") ? returnUrl : "/";
+		// Validate return URL
+		let safe = "/";
+		if (returnUrl) {
+			if (returnUrl.startsWith("/") && !returnUrl.startsWith("//")) {
+				safe = returnUrl;
+			} else {
+				try {
+					const parsed = new URL(returnUrl);
+					// Allow if hostname matches cookie domain or is a subdomain of it
+					const cookieDomain = (currentCfg.cookieDomain || "").replace(/^\./, "");
+					if (cookieDomain && (parsed.hostname === cookieDomain || parsed.hostname.endsWith("." + cookieDomain))) {
+						safe = returnUrl;
+					}
+				} catch (_e) {
+					// Invalid URL — use default
+				}
+			}
+		}
 		res.redirect(safe);
 	} catch (err) {
 		console.error("[sso] Callback error:", err.message);

@@ -359,6 +359,21 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 															</label>
 														</div>
 													</div>
+													<div className="mb-3 mt-2">
+														<label className="form-label" htmlFor="ssoForcedGroups">
+															<T id="host.sso-forced-groups" />
+														</label>
+														<Field
+															name="ssoForcedGroups"
+															type="text"
+															className="form-control"
+															id="ssoForcedGroups"
+															placeholder="Leave empty for global default"
+														/>
+														<small className="form-hint">
+															<T id="host.sso-forced-groups.description" />
+														</small>
+													</div>
 												</div>
 											</div>
 											<div className="tab-pane" id="tab-locations" role="tabpanel">
