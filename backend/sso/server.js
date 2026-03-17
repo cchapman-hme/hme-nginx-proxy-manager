@@ -2,14 +2,15 @@
 // SSO sidecar Express server.
 // Listens on 127.0.0.1:3180 (internal only).
 // Handles Azure AD MSAL auth code flow for nginx auth_request.
+// Per-host SSO config: each proxy host can have its own app registration.
 
 import express from "express";
 import session from "express-session";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { loadConfig, reloadConfig, getConfig, isConfigured, loadHostGroups } from "./config.js";
+import { loadGlobalConfig, reloadConfig, getGlobalConfig, loadHostConfig } from "./config.js";
 import { SsoSessionStore } from "./session-store.js";
-import { getAuthCodeUrl, acquireTokenByCode, resetClient } from "./msal-client.js";
+import { getAuthCodeUrl, acquireTokenByCode, resetAllClients } from "./msal-client.js";
 import { fetchUserGroups, isGroupMember } from "./group-check.js";
 import { validateReturnUrl } from "./validation.js";
 
@@ -18,7 +19,7 @@ const PORT = 3180;
 const HOST = "127.0.0.1";
 
 // ---------------------------------------------------------------------------
-// Persistent session secret (Gate 2 fix: survives restarts)
+// Persistent session secret (survives restarts)
 // ---------------------------------------------------------------------------
 function getSessionSecret() {
 	const secretPath = "/data/sso/session-secret";
@@ -36,7 +37,7 @@ function getSessionSecret() {
 const sessionStore = new SsoSessionStore();
 
 async function bootstrap() {
-	await loadConfig();
+	await loadGlobalConfig();
 }
 
 app.use(
@@ -47,7 +48,7 @@ app.use(
 		saveUninitialized: false,
 		name: "npm_sso_sid",
 		cookie: {
-			domain: undefined, // set dynamically after bootstrap
+			domain: undefined, // set dynamically per-host
 			httpOnly: true,
 			secure: process.env.NODE_ENV === "production" || process.env.SSO_SECURE_COOKIE === "true",
 			sameSite: "lax",
@@ -60,8 +61,21 @@ app.use(
 // GET /sso/verify — called by nginx auth_request (internal only)
 // ---------------------------------------------------------------------------
 app.get("/sso/verify", async (req, res) => {
-	if (!isConfigured()) {
-		// SSO not configured — pass through (200 = allow)
+	const global = getGlobalConfig();
+	if (!global?.enabled) {
+		// Kill switch off — pass through
+		return res.sendStatus(200);
+	}
+
+	const originalHost = req.headers["x-original-host"];
+	if (!originalHost) {
+		// No host header — pass through
+		return res.sendStatus(200);
+	}
+
+	const hostCfg = await loadHostConfig(originalHost);
+	if (!hostCfg) {
+		// Host has no SSO config — pass through
 		return res.sendStatus(200);
 	}
 
@@ -69,23 +83,15 @@ app.get("/sso/verify", async (req, res) => {
 		return res.sendStatus(401);
 	}
 
-	// Check per-host group restrictions
-	const originalHost = req.headers["x-original-host"];
-	if (originalHost) {
-		const hostGroups = await loadHostGroups(originalHost);
-		if (hostGroups && hostGroups.length > 0) {
-			const userGroups = req.session.ssoUser.groups || [];
-			if (!isGroupMember(userGroups, hostGroups)) {
-				return res.status(403).send("Group membership required");
-			}
-		}
+	// Tenant mismatch protection: session from different tenant → re-authenticate
+	if (req.session.ssoUser.tenantId && req.session.ssoUser.tenantId !== hostCfg.tenantId) {
+		return res.sendStatus(401);
 	}
 
-	// Check global group restrictions
-	const currentCfg = getConfig();
-	if (currentCfg.allowedGroups && currentCfg.allowedGroups.length > 0) {
+	// Check per-host group restrictions
+	if (hostCfg.allowedGroups && hostCfg.allowedGroups.length > 0) {
 		const userGroups = req.session.ssoUser.groups || [];
-		if (!isGroupMember(userGroups, currentCfg.allowedGroups)) {
+		if (!isGroupMember(userGroups, hostCfg.allowedGroups)) {
 			return res.status(403).send("Group membership required");
 		}
 	}
@@ -99,24 +105,30 @@ app.get("/sso/verify", async (req, res) => {
 // GET /sso/login — initiate MSAL auth code flow
 // ---------------------------------------------------------------------------
 app.get("/sso/login", async (req, res) => {
-	if (!isConfigured()) {
+	const global = getGlobalConfig();
+	if (!global?.enabled) {
 		return res.status(503).send("SSO is not configured");
 	}
 
-	const currentCfg = getConfig();
+	const originalHost = req.headers["x-original-host"] || req.hostname;
+	const hostCfg = await loadHostConfig(originalHost);
+	if (!hostCfg || !hostCfg.tenantId || !hostCfg.clientId || !hostCfg.clientSecret) {
+		return res.status(503).send("SSO is not configured for this host");
+	}
+
 	const returnUrl = req.query.return || "/";
 	const state = randomUUID();
 	req.session.oauthState = state;
 	req.session.returnUrl = returnUrl;
 
-	// Set cookie domain for SSO
-	if (currentCfg.cookieDomain) {
-		req.session.cookie.domain = currentCfg.cookieDomain;
+	// Set cookie domain for SSO session sharing
+	if (hostCfg.cookieDomain) {
+		req.session.cookie.domain = hostCfg.cookieDomain;
 	}
 
 	try {
-		const hasGroups = (currentCfg.allowedGroups && currentCfg.allowedGroups.length > 0);
-		const authUrl = await getAuthCodeUrl(state, currentCfg.redirectUri, hasGroups);
+		const hasGroups = hostCfg.allowedGroups && hostCfg.allowedGroups.length > 0;
+		const authUrl = await getAuthCodeUrl(hostCfg, state, hostCfg.redirectUri, hasGroups);
 		res.redirect(authUrl);
 	} catch (err) {
 		console.error("[sso] Login error:", err.message);
@@ -139,13 +151,18 @@ app.get("/sso/callback", async (req, res) => {
 	}
 	delete req.session.oauthState;
 
-	const currentCfg = getConfig();
+	const originalHost = req.headers["x-original-host"] || req.hostname;
+	const hostCfg = await loadHostConfig(originalHost);
+	if (!hostCfg) {
+		return res.status(503).send("SSO not configured for this host");
+	}
+
 	// Capture return URL before session regeneration destroys it
 	const savedReturnUrl = req.session.returnUrl || "/";
 
 	try {
-		const hasGroups = (currentCfg.allowedGroups && currentCfg.allowedGroups.length > 0);
-		const result = await acquireTokenByCode(code, currentCfg.redirectUri, hasGroups);
+		const hasGroups = hostCfg.allowedGroups && hostCfg.allowedGroups.length > 0;
+		const result = await acquireTokenByCode(hostCfg, code, hostCfg.redirectUri, hasGroups);
 
 		// Fetch group memberships if needed
 		let groups = [];
@@ -154,7 +171,6 @@ app.get("/sso/callback", async (req, res) => {
 		}
 
 		// Regenerate session to prevent session fixation attacks.
-		// Old session (with oauthState, returnUrl) is destroyed and a fresh SID is issued.
 		req.session.regenerate((err) => {
 			if (err) {
 				console.error("[sso] Session regeneration failed:", err.message);
@@ -166,15 +182,16 @@ app.get("/sso/callback", async (req, res) => {
 				name: result.account.name,
 				email: result.account.username,
 				oid: result.account.homeAccountId,
+				tenantId: hostCfg.tenantId, // Store for cross-host tenant validation
 				groups,
 			};
 
 			// Set cookie domain on new session
-			if (currentCfg.cookieDomain) {
-				req.session.cookie.domain = currentCfg.cookieDomain;
+			if (hostCfg.cookieDomain) {
+				req.session.cookie.domain = hostCfg.cookieDomain;
 			}
 
-			const safe = validateReturnUrl(savedReturnUrl, currentCfg.cookieDomain);
+			const safe = validateReturnUrl(savedReturnUrl, hostCfg.cookieDomain);
 			req.session.save(() => res.redirect(safe));
 		});
 	} catch (err) {
@@ -186,13 +203,14 @@ app.get("/sso/callback", async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /sso/logout — destroy session, redirect to Azure AD logout
 // ---------------------------------------------------------------------------
-app.get("/sso/logout", (req, res) => {
-	const currentCfg = getConfig();
+app.get("/sso/logout", async (req, res) => {
+	const originalHost = req.headers["x-original-host"] || req.hostname;
+	const hostCfg = await loadHostConfig(originalHost);
 	req.session.destroy(() => {
-		if (currentCfg?.tenantId) {
-			const postLogoutUri = req.query.return || `${req.protocol}://${req.headers["x-original-host"] || req.hostname}/`;
+		if (hostCfg?.tenantId) {
+			const postLogoutUri = req.query.return || `${req.protocol}://${originalHost}/`;
 			res.redirect(
-				`https://login.microsoftonline.com/${currentCfg.tenantId}/oauth2/v2.0/logout?post_logout_redirect_uri=${encodeURIComponent(postLogoutUri)}`
+				`https://login.microsoftonline.com/${hostCfg.tenantId}/oauth2/v2.0/logout?post_logout_redirect_uri=${encodeURIComponent(postLogoutUri)}`
 			);
 		} else {
 			res.redirect("/");
@@ -205,7 +223,7 @@ app.get("/sso/logout", (req, res) => {
 // ---------------------------------------------------------------------------
 app.post("/sso/reload", async (_req, res) => {
 	await reloadConfig();
-	resetClient();
+	resetAllClients();
 	console.log("[sso] Config reloaded");
 	res.json({ ok: true });
 });
@@ -214,23 +232,22 @@ app.post("/sso/reload", async (_req, res) => {
 // GET /sso/health — health check
 // ---------------------------------------------------------------------------
 app.get("/sso/health", (_req, res) => {
-	res.json({ ok: true, configured: isConfigured() });
+	const global = getGlobalConfig();
+	res.json({ ok: true, enabled: global?.enabled || false });
 });
 
 // ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
-// Bootstrap: load config (async), then start server
 let server;
 bootstrap().then(() => {
-	// Now that config is loaded, update session cookie domain if configured
-	const cfg = getConfig();
+	const cfg = getGlobalConfig();
 
 	server = app.listen(PORT, HOST, () => {
 		if (cfg?.enabled) {
-			console.log(`[sso] SSO sidecar listening on ${HOST}:${PORT} (configured: ${isConfigured()})`);
+			console.log(`[sso] SSO sidecar listening on ${HOST}:${PORT} (kill switch: ON)`);
 		} else {
-			console.log(`[sso] SSO sidecar listening on ${HOST}:${PORT} (SSO disabled — waiting for configuration)`);
+			console.log(`[sso] SSO sidecar listening on ${HOST}:${PORT} (kill switch: OFF)`);
 		}
 	});
 }).catch((err) => {

@@ -83,28 +83,19 @@ async function query(sql) {
 // Public API
 // ---------------------------------------------------------------------------
 
+let _loggedEngine = false;
+
 /**
- * Load SSO settings from the NPM database.
- * @returns {Promise<{ enabled: boolean, tenantId: string, clientId: string, clientSecret: string, cookieDomain: string, redirectUri: string, allowedGroups: string[] } | null>}
+ * Load the global SSO kill-switch from the NPM database.
+ * Only reads `sso-enabled` from the `setting` table.
+ * @returns {Promise<{ enabled: boolean } | null>}
  */
-export async function loadConfig() {
+export async function loadGlobalConfig() {
 	try {
-		const rows = await query("SELECT id, value FROM setting WHERE id LIKE 'sso-%'");
-		const map = {};
-		for (const row of rows) {
-			map[row.id] = row.value;
-		}
-
+		const rows = await query("SELECT id, value FROM setting WHERE id = 'sso-enabled'");
 		const cfg = {
-			enabled: map["sso-enabled"] === "true",
-			tenantId: map["sso-tenant-id"] || "",
-			clientId: map["sso-client-id"] || "",
-			clientSecret: map["sso-client-secret"] || "",
-			cookieDomain: map["sso-cookie-domain"] || "",
-			redirectUri: map["sso-redirect-uri"] || "",
-			allowedGroups: parseGroups(map["sso-allowed-groups"]),
+			enabled: rows.length > 0 && rows[0].value === "true",
 		};
-
 		_config = cfg;
 		if (!_loggedEngine) {
 			console.log(`[sso] Config loaded from ${USE_MYSQL ? "MySQL" : "SQLite"}`);
@@ -117,30 +108,36 @@ export async function loadConfig() {
 	}
 }
 
-let _loggedEngine = false;
-
 /**
- * Load per-host SSO group overrides.
- * Queries all enabled SSO hosts and does exact hostname match via JSON parsing
+ * Load per-host SSO configuration from the proxy_host table.
+ * Queries all SSO-enabled hosts and matches by hostname via JSON parsing
  * (avoids unreliable SQL LIKE on JSON arrays).
  * @param {string} hostname - The hostname to look up
- * @returns {Promise<string[] | null>} - Array of group IDs, or null for global default
+ * @returns {Promise<{ tenantId: string, clientId: string, clientSecret: string, cookieDomain: string, allowedGroups: string[], redirectUri: string } | null>}
  */
-export async function loadHostGroups(hostname) {
+export async function loadHostConfig(hostname) {
 	try {
 		const rows = await query(
-			"SELECT domain_names, sso_forced_groups FROM proxy_host WHERE is_deleted = 0 AND sso_enabled = 1"
+			"SELECT domain_names, sso_enabled, sso_tenant_id, sso_client_id, " +
+			"sso_client_secret, sso_cookie_domain, sso_allowed_groups " +
+			"FROM proxy_host WHERE is_deleted = 0 AND sso_enabled = 1"
 		);
-
 		for (const row of rows) {
 			const domains = JSON.parse(row.domain_names || "[]");
 			if (domains.includes(hostname)) {
-				return parseGroups(row.sso_forced_groups);
+				return {
+					tenantId: row.sso_tenant_id || "",
+					clientId: row.sso_client_id || "",
+					clientSecret: row.sso_client_secret || "",
+					cookieDomain: row.sso_cookie_domain || "",
+					allowedGroups: parseGroups(row.sso_allowed_groups),
+					redirectUri: `https://${domains[0]}/sso/callback`,
+				};
 			}
 		}
-
 		return null;
-	} catch (_err) {
+	} catch (err) {
+		console.error("[sso] Failed to load host config:", err.message);
 		return null;
 	}
 }
@@ -149,32 +146,25 @@ export async function loadHostGroups(hostname) {
 export { parseGroups } from "./parse-groups.js";
 
 /**
- * Get cached config (call loadConfig first).
- * @returns {object | null}
+ * Get cached global config (call loadGlobalConfig first).
+ * @returns {{ enabled: boolean } | null}
  */
-export function getConfig() {
+export function getGlobalConfig() {
 	return _config;
 }
 
 /**
  * Reload config from DB (called after settings change).
- * @returns {Promise<object | null>}
+ * Clears all caches and reloads global config.
+ * @returns {Promise<{ enabled: boolean } | null>}
  */
 export async function reloadConfig() {
-	// Close SQLite handle if open
+	_config = null;
+	// Close SQLite handle if open so it picks up fresh data
 	if (_sqliteDb) {
 		_sqliteDb.close();
 		_sqliteDb = null;
 	}
 	// MySQL pool stays open (connection pooling handles reconnects)
-	return loadConfig();
-}
-
-/**
- * Check if SSO is fully configured.
- * @returns {boolean}
- */
-export function isConfigured() {
-	if (!_config) return false;
-	return _config.enabled && !!_config.tenantId && !!_config.clientId && !!_config.clientSecret && !!_config.cookieDomain;
+	return loadGlobalConfig();
 }
