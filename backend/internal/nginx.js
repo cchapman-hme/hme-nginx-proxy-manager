@@ -5,6 +5,7 @@ import _ from "lodash";
 import errs from "../lib/error.js";
 import utils from "../lib/utils.js";
 import { debug, nginx as logger } from "../logger.js";
+import settingModel from "../models/setting.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -241,7 +242,28 @@ const internalNginx = {
 			// Set the IPv6 setting for the host
 			host.ipv6 = internalNginx.ipv6Enabled();
 
-			locationsPromise.then(() => {
+			// SSO context for proxy hosts
+			let ssoPromise = Promise.resolve();
+			if (nice_host_type === "proxy_host") {
+				ssoPromise = settingModel.query().where("id", "like", "sso-%").then((ssoSettings) => {
+					const ssoMap = {};
+					for (const s of ssoSettings) {
+						ssoMap[s.id] = s.value;
+					}
+					host.sso_configured = !!(
+						ssoMap["sso-enabled"] === "true" &&
+						ssoMap["sso-tenant-id"] &&
+						ssoMap["sso-client-id"] &&
+						ssoMap["sso-client-secret"] &&
+						ssoMap["sso-cookie-domain"]
+					);
+					host.sso_redirect_host = host.domain_names?.[0] || "";
+				}).catch(() => {
+					host.sso_configured = false;
+				});
+			}
+
+			locationsPromise.then(() => ssoPromise).then(() => {
 				renderEngine
 					.parseAndRender(template, host)
 					.then((config_text) => {
