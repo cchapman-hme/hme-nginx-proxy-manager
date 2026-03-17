@@ -1,0 +1,30 @@
+# Greenfield deployment — SQLite (no external database required)
+#
+# Usage:
+#   1. Build the frontend first:  scripts/ci/frontend-build
+#   2. Build & start:             sudo docker compose -f docker-compose.greenfield.yml up --build -d
+#
+# This is the simplest deployment: single container, SQLite for storage.
+# All features work including SSO.
+
+services:
+  app:
+    image: hme-npm:latest
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    environment:
+      DB_SQLITE_FILE: "/data/database.sqlite"
+      DISABLE_IPV6: "true"
+    volumes:
+      - npm-data:/data
+      - npm-letsencrypt:/etc/letsencrypt
+
+volumes:
+  npm-data:
+  npm-letsencrypt:

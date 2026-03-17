@@ -103,11 +103,16 @@ The logout endpoint (`GET /sso/logout`) is accessible via GET request. This mean
 ### Internal Endpoints
 The `/sso/reload` and `/sso/health` endpoints are blocked from external access by nginx exact-match location rules returning 403. They remain accessible internally from the backend via loopback (`127.0.0.1:3180`).
 
-## SQLite-Only Limitation (V1)
+## Database Support
 
-The SSO sidecar reads configuration directly from the NPM SQLite database file using `better-sqlite3` (read-only mode). This means SSO is **only supported when NPM uses SQLite** as its database backend.
+The SSO sidecar auto-detects the database engine from the same environment variables the main NPM app uses:
 
-MySQL and PostgreSQL support would require the sidecar to use a different database driver, which is planned for a future version.
+| Engine | Detection | How it connects |
+|--------|-----------|-----------------|
+| **MySQL/MariaDB** | `DB_MYSQL_HOST`, `DB_MYSQL_USER`, `DB_MYSQL_NAME` all set | `mysql2` connection pool (3 connections) |
+| **SQLite** (default) | No MySQL env vars | `better-sqlite3` read-only on `DB_SQLITE_FILE` or `/data/database.sqlite` |
+
+Session storage always uses a local SQLite file (`/data/sso/sessions.db`) regardless of the main database engine.
 
 ## Files
 

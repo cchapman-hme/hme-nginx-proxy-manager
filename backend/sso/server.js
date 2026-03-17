@@ -33,8 +33,11 @@ function getSessionSecret() {
 // ---------------------------------------------------------------------------
 // Load initial config and set up session
 // ---------------------------------------------------------------------------
-const cfg = loadConfig();
 const sessionStore = new SsoSessionStore();
+
+async function bootstrap() {
+	await loadConfig();
+}
 
 app.use(
 	session({
@@ -44,7 +47,7 @@ app.use(
 		saveUninitialized: false,
 		name: "npm_sso_sid",
 		cookie: {
-			domain: cfg?.cookieDomain || undefined,
+			domain: undefined, // set dynamically after bootstrap
 			httpOnly: true,
 			secure: process.env.NODE_ENV === "production" || process.env.SSO_SECURE_COOKIE === "true",
 			sameSite: "lax",
@@ -69,7 +72,7 @@ app.get("/sso/verify", async (req, res) => {
 	// Check per-host group restrictions
 	const originalHost = req.headers["x-original-host"];
 	if (originalHost) {
-		const hostGroups = loadHostGroups(originalHost);
+		const hostGroups = await loadHostGroups(originalHost);
 		if (hostGroups && hostGroups.length > 0) {
 			const userGroups = req.session.ssoUser.groups || [];
 			if (!isGroupMember(userGroups, hostGroups)) {
@@ -200,8 +203,8 @@ app.get("/sso/logout", (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /sso/reload — reload config from DB
 // ---------------------------------------------------------------------------
-app.post("/sso/reload", (_req, res) => {
-	reloadConfig();
+app.post("/sso/reload", async (_req, res) => {
+	await reloadConfig();
 	resetClient();
 	console.log("[sso] Config reloaded");
 	res.json({ ok: true });
@@ -217,13 +220,22 @@ app.get("/sso/health", (_req, res) => {
 // ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
-const server = app.listen(PORT, HOST, () => {
-	const startCfg = getConfig();
-	if (startCfg?.enabled) {
-		console.log(`[sso] SSO sidecar listening on ${HOST}:${PORT} (configured: ${isConfigured()})`);
-	} else {
-		console.log(`[sso] SSO sidecar listening on ${HOST}:${PORT} (SSO disabled — waiting for configuration)`);
-	}
+// Bootstrap: load config (async), then start server
+let server;
+bootstrap().then(() => {
+	// Now that config is loaded, update session cookie domain if configured
+	const cfg = getConfig();
+
+	server = app.listen(PORT, HOST, () => {
+		if (cfg?.enabled) {
+			console.log(`[sso] SSO sidecar listening on ${HOST}:${PORT} (configured: ${isConfigured()})`);
+		} else {
+			console.log(`[sso] SSO sidecar listening on ${HOST}:${PORT} (SSO disabled — waiting for configuration)`);
+		}
+	});
+}).catch((err) => {
+	console.error("[sso] Bootstrap failed:", err.message);
+	process.exit(1);
 });
 
 // ---------------------------------------------------------------------------
@@ -231,8 +243,12 @@ const server = app.listen(PORT, HOST, () => {
 // ---------------------------------------------------------------------------
 process.on("SIGTERM", () => {
 	console.log("[sso] SIGTERM received, shutting down...");
-	server.close(() => {
-		sessionStore.close();
+	if (server) {
+		server.close(() => {
+			sessionStore.close();
+			process.exit(0);
+		});
+	} else {
 		process.exit(0);
-	});
+	}
 });
