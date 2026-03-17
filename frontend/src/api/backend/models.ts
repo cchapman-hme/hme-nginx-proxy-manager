@@ -128,6 +128,8 @@ export interface ProxyHost {
 	hstsEnabled: boolean;
 	hstsSubdomains: boolean;
 	trustForwardedProto: boolean;
+	ssoEnabled: boolean;
+	ssoForcedGroups: string[] | null;
 	// Expansions:
 	owner?: User;
 	accessList?: AccessList;

@@ -25,6 +25,8 @@ const fetchProxyHost = (id: number | "new") => {
 			hstsEnabled: false,
 			hstsSubdomains: false,
 			trustForwardedProto: false,
+			ssoEnabled: true,
+			ssoForcedGroups: null,
 		} as ProxyHost);
 	}
 	return getProxyHost(id, ["owner"]);

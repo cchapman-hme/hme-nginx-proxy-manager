@@ -41,9 +41,13 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		setIsSubmitting(true);
 		setErrorMsg(null);
 
-		const { ...payload } = {
+		const { ssoForcedGroups, ...rest } = values;
+		const payload = {
 			id: id === "new" ? undefined : id,
-			...values,
+			...rest,
+			ssoForcedGroups: ssoForcedGroups
+				? ssoForcedGroups.split(",").map((s: string) => s.trim()).filter(Boolean)
+				: null,
 		};
 
 		setProxyHost(payload, {
@@ -89,6 +93,9 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 							hstsEnabled: data?.hstsEnabled || false,
 							hstsSubdomains: data?.hstsSubdomains || false,
 							trustForwardedProto: data?.trustForwardedProto || false,
+							// SSO
+							ssoEnabled: data?.ssoEnabled ?? true,
+							ssoForcedGroups: data?.ssoForcedGroups ? data.ssoForcedGroups.join(", ") : "",
 							// Advanced tab
 							advancedConfig: data?.advancedConfig || "",
 							meta: data?.meta || {},
@@ -317,6 +324,29 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 																				<input
 																					{...field}
 																					id="allowWebsocketUpgrade"
+																					className={cn("form-check-input", {
+																						"bg-lime": field.checked,
+																					})}
+																					type="checkbox"
+																				/>
+																			</label>
+																		)}
+																	</Field>
+																</span>
+															</label>
+														</div>
+														<div>
+															<label className="row" htmlFor="ssoEnabled">
+																<span className="col">
+																	<T id="host.sso-enabled" />
+																</span>
+																<span className="col-auto">
+																	<Field name="ssoEnabled" type="checkbox">
+																		{({ field }: any) => (
+																			<label className="form-check form-check-single form-switch">
+																				<input
+																					{...field}
+																					id="ssoEnabled"
 																					className={cn("form-check-input", {
 																						"bg-lime": field.checked,
 																					})}

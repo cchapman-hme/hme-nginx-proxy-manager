@@ -443,6 +443,18 @@
 	"host.forward-scheme": {
 		"defaultMessage": "Scheme"
 	},
+	"host.sso-enabled": {
+		"defaultMessage": "Azure SSO"
+	},
+	"host.sso-enabled.description": {
+		"defaultMessage": "Require Azure AD SSO authentication for this proxy host"
+	},
+	"host.sso-forced-groups": {
+		"defaultMessage": "Required Azure AD Groups"
+	},
+	"host.sso-forced-groups.description": {
+		"defaultMessage": "Comma-separated Azure AD group IDs. Leave empty to use global default."
+	},
 	"hosts": {
 		"defaultMessage": "Hosts"
 	},
@@ -679,6 +691,39 @@
 	},
 	"settings.default-site.redirect": {
 		"defaultMessage": "Redirect"
+	},
+	"settings.sso": {
+		"defaultMessage": "Azure SSO"
+	},
+	"settings.sso.description": {
+		"defaultMessage": "Configure Azure AD Single Sign-On for proxy hosts"
+	},
+	"settings.sso.tenant-id": {
+		"defaultMessage": "Tenant ID"
+	},
+	"settings.sso.client-id": {
+		"defaultMessage": "Client ID"
+	},
+	"settings.sso.client-secret": {
+		"defaultMessage": "Client Secret"
+	},
+	"settings.sso.cookie-domain": {
+		"defaultMessage": "Cookie Domain"
+	},
+	"settings.sso.redirect-uri": {
+		"defaultMessage": "Redirect URI"
+	},
+	"settings.sso.allowed-groups": {
+		"defaultMessage": "Allowed Groups (comma-separated Azure AD Group IDs)"
+	},
+	"settings.sso.enabled": {
+		"defaultMessage": "Enable Azure SSO"
+	},
+	"settings.sso.enabled.description": {
+		"defaultMessage": "When enabled, all proxy hosts require Azure AD SSO authentication by default"
+	},
+	"settings.sso.save-warning": {
+		"defaultMessage": "Saving will regenerate all proxy host nginx configs."
 	},
 	"setup.preamble": {
 		"defaultMessage": "Get started by creating your admin account."
