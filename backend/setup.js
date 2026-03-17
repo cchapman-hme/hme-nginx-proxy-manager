@@ -98,6 +98,45 @@ const setupDefaultSettings = async () => {
 };
 
 /**
+ * Creates default SSO settings if they don't already exist in the database
+ *
+ * @returns {Promise}
+ */
+const setupSsoSettings = async () => {
+	const ssoSettings = [
+		{ id: "sso-enabled", name: "SSO Enabled", description: "Enable or disable SSO authentication", value: "false" },
+		{ id: "sso-tenant-id", name: "SSO Tenant ID", description: "Azure AD tenant ID for SSO", value: "" },
+		{ id: "sso-client-id", name: "SSO Client ID", description: "OAuth2 client ID for SSO", value: "" },
+		{ id: "sso-client-secret", name: "SSO Client Secret", description: "OAuth2 client secret for SSO", value: "" },
+		{ id: "sso-cookie-domain", name: "SSO Cookie Domain", description: "Domain for SSO authentication cookies", value: "" },
+		{ id: "sso-redirect-uri", name: "SSO Redirect URI", description: "OAuth2 redirect URI for SSO callback", value: "" },
+		{ id: "sso-allowed-groups", name: "SSO Allowed Groups", description: "JSON array of allowed SSO group IDs", value: "[]" },
+	];
+
+	for (const setting of ssoSettings) {
+		const row = await settingModel
+			.query()
+			.select("id")
+			.where({ id: setting.id })
+			.first();
+
+		if (!row?.id) {
+			await settingModel
+				.query()
+				.insert({
+					id: setting.id,
+					name: setting.name,
+					description: setting.description,
+					value: setting.value,
+					meta: {},
+				});
+		}
+	}
+
+	logger.info("SSO settings initialized");
+};
+
+/**
  * Installs all Certbot plugins which are required for an installed certificate
  *
  * @returns {Promise}
@@ -163,4 +202,4 @@ const setupLogrotation = () => {
 	return runLogrotate();
 };
 
-export default () => setupDefaultUser().then(setupDefaultSettings).then(setupCertbotPlugins).then(setupLogrotation);
+export default () => setupDefaultUser().then(setupDefaultSettings).then(setupSsoSettings).then(setupCertbotPlugins).then(setupLogrotation);
