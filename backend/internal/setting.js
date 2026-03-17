@@ -31,7 +31,7 @@ const internalSetting = {
 					id: data.id,
 				});
 			})
-			.then((row) => {
+			.then(async (row) => {
 				if (row.id === "default-site") {
 					// write the html if we need to
 					if (row.value === "html") {
@@ -68,6 +68,31 @@ const internalSetting = {
 								});
 						});
 				}
+
+				// When SSO settings change, regenerate all proxy host configs
+				if (row.id.startsWith("sso-")) {
+					const proxyHostModel = (await import("../models/proxy_host.js")).default;
+					const hosts = await proxyHostModel
+						.query()
+						.where("is_deleted", 0)
+						.eager("[certificate, access_list.[clients,items]]");
+
+					if (hosts.length) {
+						const internalNginxMod = (await import("./nginx.js")).default;
+						await internalNginxMod.bulkGenerateConfigs("proxy_host", hosts);
+						await internalNginxMod.reload();
+					}
+
+					// Notify SSO sidecar to reload config
+					try {
+						await fetch("http://127.0.0.1:3180/sso/reload", { method: "POST" });
+					} catch (_err) {
+						// Sidecar may not be running yet — ignore
+					}
+
+					return row;
+				}
+
 				return row;
 			});
 	},
