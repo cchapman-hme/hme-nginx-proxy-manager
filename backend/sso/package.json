@@ -1,0 +1,12 @@
+{
+	"name": "npm-sso-sidecar",
+	"version": "1.0.0",
+	"type": "module",
+	"private": true,
+	"dependencies": {
+		"@azure/msal-node": "^2.16.2",
+		"better-sqlite3": "^12.6.2",
+		"express": "^5.2.1",
+		"express-session": "^1.18.1"
+	}
+}
