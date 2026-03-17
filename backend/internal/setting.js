@@ -69,8 +69,9 @@ const internalSetting = {
 						});
 				}
 
-				// When SSO settings change, regenerate all proxy host configs
-				if (row.id.startsWith("sso-")) {
+				// When SSO master switch changes, regenerate all proxy host configs
+				// (frontend saves sso-enabled LAST, so all other sso-* values are already committed)
+				if (row.id === "sso-enabled") {
 					const proxyHostModel = (await import("../models/proxy_host.js")).default;
 					const hosts = await proxyHostModel
 						.query()

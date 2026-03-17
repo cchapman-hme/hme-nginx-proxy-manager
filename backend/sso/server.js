@@ -136,6 +136,8 @@ app.get("/sso/callback", async (req, res) => {
 	delete req.session.oauthState;
 
 	const currentCfg = getConfig();
+	// Capture return URL before session regeneration destroys it
+	const savedReturnUrl = req.session.returnUrl || "/";
 
 	try {
 		const hasGroups = (currentCfg.allowedGroups && currentCfg.allowedGroups.length > 0);
@@ -147,41 +149,47 @@ app.get("/sso/callback", async (req, res) => {
 			groups = await fetchUserGroups(result.accessToken);
 		}
 
-		// Store user in session
-		req.session.ssoUser = {
-			name: result.account.name,
-			email: result.account.username,
-			oid: result.account.homeAccountId,
-			groups,
-		};
+		// Regenerate session to prevent session fixation attacks.
+		// Old session (with oauthState, returnUrl) is destroyed and a fresh SID is issued.
+		req.session.regenerate((err) => {
+			if (err) {
+				console.error("[sso] Session regeneration failed:", err.message);
+				return res.status(500).send("SSO authentication failed");
+			}
 
-		// Set cookie domain
-		if (currentCfg.cookieDomain) {
-			req.session.cookie.domain = currentCfg.cookieDomain;
-		}
+			// Store user in new session
+			req.session.ssoUser = {
+				name: result.account.name,
+				email: result.account.username,
+				oid: result.account.homeAccountId,
+				groups,
+			};
 
-		const returnUrl = req.session.returnUrl || "/";
-		delete req.session.returnUrl;
+			// Set cookie domain on new session
+			if (currentCfg.cookieDomain) {
+				req.session.cookie.domain = currentCfg.cookieDomain;
+			}
 
-		// Validate return URL
-		let safe = "/";
-		if (returnUrl) {
-			if (returnUrl.startsWith("/") && !returnUrl.startsWith("//")) {
-				safe = returnUrl;
-			} else {
-				try {
-					const parsed = new URL(returnUrl);
-					// Allow if hostname matches cookie domain or is a subdomain of it
-					const cookieDomain = (currentCfg.cookieDomain || "").replace(/^\./, "");
-					if (cookieDomain && (parsed.hostname === cookieDomain || parsed.hostname.endsWith("." + cookieDomain))) {
-						safe = returnUrl;
+			// Validate return URL
+			let safe = "/";
+			if (savedReturnUrl) {
+				if (savedReturnUrl.startsWith("/") && !savedReturnUrl.startsWith("//")) {
+					safe = savedReturnUrl;
+				} else {
+					try {
+						const parsed = new URL(savedReturnUrl);
+						const cookieDomain = (currentCfg.cookieDomain || "").replace(/^\./, "");
+						if (cookieDomain && (parsed.hostname === cookieDomain || parsed.hostname.endsWith("." + cookieDomain))) {
+							safe = savedReturnUrl;
+						}
+					} catch (_e) {
+						// Invalid URL — use default
 					}
-				} catch (_e) {
-					// Invalid URL — use default
 				}
 			}
-		}
-		res.redirect(safe);
+
+			req.session.save(() => res.redirect(safe));
+		});
 	} catch (err) {
 		console.error("[sso] Callback error:", err.message);
 		res.status(500).send("SSO authentication failed");
