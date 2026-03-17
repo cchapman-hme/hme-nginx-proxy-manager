@@ -1,18 +1,17 @@
 # Greenfield deployment — SQLite (no external database required)
 #
 # Usage:
-#   1. Build the frontend first:  scripts/ci/frontend-build
-#   2. Build & start:             sudo docker compose -f docker-compose.greenfield.yml up --build -d
+#   sudo docker compose -f docker-compose.greenfield.yml up -d
+#
+# Image is built and pushed automatically by GitHub Actions.
+# See: .github/workflows/build-push.yml
 #
 # This is the simplest deployment: single container, SQLite for storage.
 # All features work including SSO.
 
 services:
   app:
-    image: hme-npm:latest
-    build:
-      context: ../
-      dockerfile: docker/Dockerfile
+    image: ghcr.io/cchapman-hme/hme-nginx-proxy-manager:latest
     restart: unless-stopped
     ports:
       - "80:80"

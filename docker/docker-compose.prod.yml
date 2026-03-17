@@ -1,8 +1,10 @@
 # Production deployment — MariaDB (migration from jc21/nginx-proxy-manager)
 #
 # Usage:
-#   1. Build the frontend first:  scripts/ci/frontend-build
-#   2. Build & start:             sudo docker compose -f docker-compose.prod.yml up --build -d
+#   sudo docker compose -f docker-compose.prod.yml up -d
+#
+# Image is built and pushed automatically by GitHub Actions.
+# See: .github/workflows/build-push.yml
 #
 # This preserves your existing MariaDB data. Mount the same volumes
 # your jc21 deployment used. All features including SSO are supported.
@@ -12,10 +14,7 @@
 
 services:
   app:
-    image: hme-npm:latest
-    build:
-      context: ../
-      dockerfile: docker/Dockerfile
+    image: ghcr.io/cchapman-hme/hme-nginx-proxy-manager:latest
     restart: unless-stopped
     ports:
       - "80:80"
