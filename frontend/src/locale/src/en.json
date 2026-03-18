@@ -308,6 +308,9 @@
 	"column.source": {
 		"defaultMessage": "Source"
 	},
+	"column.sso": {
+		"defaultMessage": "SSO"
+	},
 	"column.ssl": {
 		"defaultMessage": "SSL"
 	},
