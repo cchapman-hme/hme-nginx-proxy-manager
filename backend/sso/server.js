@@ -12,6 +12,7 @@ import { loadGlobalConfig, reloadConfig, getGlobalConfig, loadHostConfig } from 
 import { SsoSessionStore } from "./session-store.js";
 import { getAuthCodeUrl, acquireTokenByCode, resetAllClients } from "./msal-client.js";
 import { fetchUserGroups, isGroupMember } from "./group-check.js";
+import { saveLoginSessionAndRedirect } from "./login-session.js";
 import { validateReturnUrl } from "./validation.js";
 
 const app = express();
@@ -124,18 +125,16 @@ app.get("/sso/login", async (req, res) => {
 
 	const returnUrl = req.query.return || "/";
 	const state = randomUUID();
-	req.session.oauthState = state;
-	req.session.returnUrl = validateReturnUrl(returnUrl, hostCfg.cookieDomain);
-
-	// Set cookie domain for SSO session sharing
-	if (hostCfg.cookieDomain) {
-		req.session.cookie.domain = hostCfg.cookieDomain;
-	}
 
 	try {
 		const hasGroups = hostCfg.allowedGroups && hostCfg.allowedGroups.length > 0;
 		const authUrl = await getAuthCodeUrl(hostCfg, state, hostCfg.redirectUri, hasGroups);
-		res.redirect(authUrl);
+		await saveLoginSessionAndRedirect(req, res, {
+			state,
+			returnUrl,
+			cookieDomain: hostCfg.cookieDomain,
+			authUrl,
+		});
 	} catch (err) {
 		console.error("[sso] Login error:", err.message);
 		res.status(500).send("SSO login failed");
