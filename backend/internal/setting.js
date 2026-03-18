@@ -76,7 +76,7 @@ const internalSetting = {
 					const hosts = await proxyHostModel
 						.query()
 						.where("is_deleted", 0)
-						.eager("[certificate, access_list.[clients,items]]");
+						.withGraphFetched("[certificate, access_list.[clients,items]]");
 
 					if (hosts.length) {
 						const internalNginxMod = (await import("./nginx.js")).default;
