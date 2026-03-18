@@ -3,7 +3,7 @@ import errs from "../lib/error.js";
 import { castJsonIfNeed } from "../lib/helpers.js";
 import { validateSsoFields as _validateSsoFields, hasSsoRelevantChanges } from "../lib/sso-helpers.js";
 import utils from "../lib/utils.js";
-import logger from "../logger.js";
+import { global as logger } from "../logger.js";
 import proxyHostModel from "../models/proxy_host.js";
 import internalAuditLog from "./audit-log.js";
 import internalCertificate from "./certificate.js";
