@@ -18,6 +18,12 @@ const app = express();
 const PORT = 3180;
 const HOST = "127.0.0.1";
 
+// Trust nginx reverse proxy — required for secure cookies to work.
+// Without this, Express sees req.secure=false (HTTP from nginx) and
+// refuses to set Secure cookies, even though the client connection is HTTPS.
+// Nginx forwards X-Forwarded-Proto which Express reads when trust proxy is on.
+app.set("trust proxy", 1);
+
 // ---------------------------------------------------------------------------
 // Persistent session secret (survives restarts)
 // ---------------------------------------------------------------------------
