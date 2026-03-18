@@ -240,20 +240,22 @@ const internalNginx = {
 			if (nice_host_type === "proxy_host") {
 				if (ssoContext) {
 					// Use prefetched context (bulk generation optimization)
+					// Note: sso_client_secret is intentionally NOT checked here — it's
+					// stripped by omissions() for API security. The SSO sidecar reads
+					// secrets directly from the database; nginx never needs them.
 					host.sso_configured = ssoContext.globalEnabled && host.sso_enabled && !!(
 						host.sso_tenant_id &&
 						host.sso_client_id &&
-						host.sso_client_secret &&
 						host.sso_cookie_domain
 					);
 					host.sso_redirect_host = host.domain_names?.[0] || "";
 				} else {
 					ssoPromise = settingModel.query().where("id", "sso-enabled").first().then((row) => {
 						const globalEnabled = row?.value === "true";
+						// Note: sso_client_secret intentionally NOT checked — see comment above
 						host.sso_configured = globalEnabled && host.sso_enabled && !!(
 							host.sso_tenant_id &&
 							host.sso_client_id &&
-							host.sso_client_secret &&
 							host.sso_cookie_domain
 						);
 						host.sso_redirect_host = host.domain_names?.[0] || "";
