@@ -211,7 +211,8 @@ app.get("/sso/logout", async (req, res) => {
 			const rawReturn = req.query.return || `${req.protocol}://${originalHost}/`;
 			const postLogoutUri = validateReturnUrl(rawReturn, hostCfg?.cookieDomain || "");
 			// If validateReturnUrl fell back to "/", build an absolute URL for Azure AD
-			const absoluteUri = postLogoutUri.startsWith("http")
+			const isAbsolute = postLogoutUri.startsWith("https://") || postLogoutUri.startsWith("http://");
+			const absoluteUri = isAbsolute
 				? postLogoutUri
 				: `${req.protocol}://${originalHost}${postLogoutUri}`;
 			res.redirect(

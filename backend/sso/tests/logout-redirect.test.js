@@ -14,7 +14,9 @@ const COOKIE_DOMAIN = ".example.com";
  */
 function buildLogoutRedirectUri(rawReturn, cookieDomain, protocol, originalHost) {
 	const safe = validateReturnUrl(rawReturn, cookieDomain || "");
-	return safe.startsWith("http") ? safe : `${protocol}://${originalHost}${safe}`;
+	// Use explicit scheme match — safe has already passed validateReturnUrl
+	const isAbsolute = safe.startsWith("https://") || safe.startsWith("http://");
+	return isAbsolute ? safe : `${protocol}://${originalHost}${safe}`;
 }
 
 describe("SSO logout redirect safety", () => {
