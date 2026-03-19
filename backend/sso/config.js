@@ -138,11 +138,19 @@ export async function loadHostConfig(hostname) {
 		for (const row of rows) {
 			const domains = JSON.parse(row.domain_names || "[]");
 			if (domains.includes(hostname)) {
+				// Sanitize cookie domain: wildcard "*.example.com" is invalid
+				// in Set-Cookie Domain attribute (RFC 6265). Convert to
+				// ".example.com" which means "example.com and all subdomains".
+				let cookieDomain = (row.sso_cookie_domain || "").trim();
+				if (cookieDomain.startsWith("*.")) {
+					cookieDomain = cookieDomain.slice(1); // "*.hme.com" → ".hme.com"
+				}
+
 				const result = {
 					tenantId: row.sso_tenant_id || "",
 					clientId: row.sso_client_id || "",
 					clientSecret: row.sso_client_secret || "",
-					cookieDomain: row.sso_cookie_domain || "",
+					cookieDomain,
 					allowedGroups: parseGroups(row.sso_allowed_groups),
 					redirectUri: `https://${domains[0]}/sso/callback`,
 				};
