@@ -129,11 +129,33 @@ app.get("/sso/login", async (req, res) => {
 	try {
 		const hasGroups = hostCfg.allowedGroups && hostCfg.allowedGroups.length > 0;
 		const authUrl = await getAuthCodeUrl(hostCfg, state, hostCfg.redirectUri, hasGroups);
-		await saveLoginSessionAndRedirect(req, res, {
-			state,
-			returnUrl,
-			cookieDomain: hostCfg.cookieDomain,
-			authUrl,
+
+		// Regenerate session before storing OAuth state to prevent stale or
+		// cross-domain session cookies from causing "Invalid OAuth state" at
+		// callback time. Without this, a pre-existing npm_sso_sid cookie (e.g.
+		// from a prior attempt or another subdomain) can be sent by the browser
+		// on the callback, pointing to a session with no oauthState.
+		req.session.regenerate((err) => {
+			if (err) {
+				console.error("[sso] Session regeneration failed during login:", err.message);
+				return res.status(500).send("SSO login failed");
+			}
+			saveLoginSessionAndRedirect(req, res, {
+				state,
+				returnUrl,
+				cookieDomain: hostCfg.cookieDomain,
+				authUrl,
+			}).then(() => {
+				console.log(
+					`[sso] Login initiated — host=${originalHost} ` +
+					`redirectUri=${hostCfg.redirectUri} ` +
+					`cookieDomain=${hostCfg.cookieDomain || "(none)"} ` +
+					`sid=${req.sessionID}`
+				);
+			}).catch((saveErr) => {
+				console.error("[sso] Login session save failed:", saveErr.message);
+				res.status(500).send("SSO login failed");
+			});
 		});
 	} catch (err) {
 		console.error("[sso] Login error:", err.message);
@@ -152,6 +174,12 @@ app.get("/sso/callback", async (req, res) => {
 	}
 
 	if (!req.session.oauthState || state !== req.session.oauthState) {
+		const sid = req.sessionID || "(none)";
+		const hasCookie = !!req.headers.cookie;
+		console.warn(
+			`[sso] Invalid OAuth state — sid=${sid} hasCookie=${hasCookie} ` +
+			`sessionHasState=${!!req.session.oauthState} host=${req.headers["x-original-host"] || req.hostname}`
+		);
 		return res.status(403).send("Invalid OAuth state");
 	}
 	delete req.session.oauthState;
