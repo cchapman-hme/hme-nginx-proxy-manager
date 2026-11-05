@@ -1,6 +1,6 @@
-import { IconDotsVertical, IconEdit, IconPower, IconTrash } from "@tabler/icons-react";
-import { createColumnHelper, getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { useMemo } from "react";
+import { IconDotsVertical, IconEdit, IconFileText, IconPower, IconTrash } from "@tabler/icons-react";
+import { createColumnHelper, type SortingState, useTable } from "@tanstack/react-table";
+import { useMemo, useState } from "react";
 import type { ProxyHost } from "src/api/backend";
 import {
 	AccessListFormatter,
@@ -11,6 +11,7 @@ import {
 	HasPermission,
 	TrueFalseFormatter,
 } from "src/components";
+import { type Features, features } from "src/components/Table/features";
 import { TableLayout } from "src/components/Table/TableLayout";
 import { intl, T } from "src/locale";
 import { MANAGE, PROXY_HOSTS } from "src/modules/Permissions";
@@ -22,14 +23,25 @@ interface Props {
 	onEdit?: (id: number) => void;
 	onDelete?: (id: number) => void;
 	onDisableToggle?: (id: number, enabled: boolean) => void;
+	onLogs?: (id: number) => void;
 	onNew?: () => void;
 }
-export default function Table({ data, isFetching, onEdit, onDelete, onDisableToggle, onNew, isFiltered }: Props) {
-	const columnHelper = createColumnHelper<ProxyHost>();
+export default function Table({
+	data,
+	isFetching,
+	onEdit,
+	onDelete,
+	onDisableToggle,
+	onLogs,
+	onNew,
+	isFiltered,
+}: Props) {
+	const columnHelper = createColumnHelper<Features, ProxyHost>();
 	const columns = useMemo(
 		() => [
 			columnHelper.accessor((row: any) => row.owner, {
 				id: "owner",
+				enableSorting: false,
 				cell: (info: any) => {
 					const value = info.getValue();
 					return <GravatarFormatter url={value ? value.avatar : ""} name={value ? value.name : ""} />;
@@ -41,6 +53,11 @@ export default function Table({ data, isFetching, onEdit, onDelete, onDisableTog
 			columnHelper.accessor((row: any) => row, {
 				id: "domainNames",
 				header: intl.formatMessage({ id: "column.source" }),
+				sortFn: (a, b) => {
+					const aVal = a.original.domainNames?.[0] ?? "";
+					const bVal = b.original.domainNames?.[0] ?? "";
+					return aVal.localeCompare(bVal);
+				},
 				cell: (info: any) => {
 					const value = info.getValue();
 					return <DomainsFormatter domains={value.domainNames} createdOn={value.createdOn} />;
@@ -49,6 +66,11 @@ export default function Table({ data, isFetching, onEdit, onDelete, onDisableTog
 			columnHelper.accessor((row: any) => row, {
 				id: "forwardHost",
 				header: intl.formatMessage({ id: "column.destination" }),
+				sortFn: (a, b) => {
+					const aVal = `${a.original.forwardHost}:${a.original.forwardPort}`;
+					const bVal = `${b.original.forwardHost}:${b.original.forwardPort}`;
+					return aVal.localeCompare(bVal);
+				},
 				cell: (info: any) => {
 					const value = info.getValue();
 					return `${value.forwardScheme}://${value.forwardHost}:${value.forwardPort}`;
@@ -56,6 +78,7 @@ export default function Table({ data, isFetching, onEdit, onDelete, onDisableTog
 			}),
 			columnHelper.accessor((row: any) => row.certificate, {
 				id: "certificate",
+				enableSorting: false,
 				header: intl.formatMessage({ id: "column.ssl" }),
 				cell: (info: any) => {
 					return <CertificateFormatter certificate={info.getValue()} />;
@@ -63,6 +86,7 @@ export default function Table({ data, isFetching, onEdit, onDelete, onDisableTog
 			}),
 			columnHelper.accessor((row: any) => row.accessList, {
 				id: "accessList",
+				enableSorting: false,
 				header: intl.formatMessage({ id: "column.access" }),
 				cell: (info: any) => {
 					return <AccessListFormatter access={info.getValue()} />;
@@ -113,6 +137,17 @@ export default function Table({ data, isFetching, onEdit, onDelete, onDisableTog
 										href="#"
 										onClick={(e) => {
 											e.preventDefault();
+											onLogs?.(info.row.original.id);
+										}}
+									>
+										<IconFileText size={16} />
+										<T id="action.logs" />
+									</a>
+									<a
+										className="dropdown-item"
+										href="#"
+										onClick={(e) => {
+											e.preventDefault();
 											onDisableToggle?.(info.row.original.id, !info.row.original.enabled);
 										}}
 									>
@@ -141,14 +176,17 @@ export default function Table({ data, isFetching, onEdit, onDelete, onDisableTog
 				},
 			}),
 		],
-		[columnHelper, onEdit, onDisableToggle, onDelete],
+		[columnHelper, onEdit, onDisableToggle, onDelete, onLogs],
 	);
 
-	const tableInstance = useReactTable<ProxyHost>({
+	const [sorting, setSorting] = useState<SortingState>([]);
+
+	const tableInstance = useTable({
+		features,
 		columns,
 		data,
-		getCoreRowModel: getCoreRowModel(),
-		rowCount: data.length,
+		state: { sorting },
+		onSortingChange: setSorting,
 		meta: {
 			isFetching,
 		},

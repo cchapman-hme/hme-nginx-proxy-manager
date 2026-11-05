@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import https from "node:https";
 import path from "path";
-import archiver from "archiver";
+import { ZipArchive } from "archiver";
 import _ from "lodash";
 import moment from "moment";
 import { ProxyAgent } from "proxy-agent";
@@ -66,7 +66,7 @@ const internalCertificate = {
 				.andWhere("provider", "letsencrypt")
 				.andWhere("expires_on", "<", expirationThreshold)
 				.then((certificates) => {
-					if (!certificates || !certificates.length) {
+					if (!certificates?.length) {
 						return null;
 					}
 
@@ -143,7 +143,7 @@ const internalCertificate = {
 				await internalCertificate.disableInUseHosts(inUseResult);
 
 				const user = await userModel.query().where("is_deleted", 0).andWhere("id", data.owner_user_id).first();
-				if (!user || !user.email) {
+				if (!user?.email) {
 					throw new error.ValidationError(
 						"A valid email address must be set on your user account to use Let's Encrypt",
 					);
@@ -305,7 +305,7 @@ const internalCertificate = {
 		}
 
 		const row = await query.then(utils.omitRow(omissions()));
-		if (!row || !row.id) {
+		if (!row?.id) {
 			throw new error.ItemNotFoundError(data.id);
 		}
 		// Custom omissions
@@ -370,7 +370,7 @@ const internalCertificate = {
 	 * @returns {Promise}
 	 */
 	zipFiles: async (source, out) => {
-		const archive = archiver("zip", { zlib: { level: 9 } });
+		const archive = new ZipArchive({ zlib: { level: 9 } });
 		const stream = fs.createWriteStream(out);
 
 		return new Promise((resolve, reject) => {
@@ -397,7 +397,7 @@ const internalCertificate = {
 		await access.can("certificates:delete", data.id);
 		const row = await internalCertificate.get(access, { id: data.id });
 
-		if (!row || !row.id) {
+		if (!row?.id) {
 			throw new error.ItemNotFoundError(data.id);
 		}
 
@@ -614,7 +614,7 @@ const internalCertificate = {
 		const certificate = await internalCertificate.update(access, {
 			id: data.id,
 			expires_on: moment(validations.certificate.dates.to, "X").format("YYYY-MM-DD HH:mm:ss"),
-			domain_names: [validations.certificate.cn],
+			domain_names: validations.certificate.cn ? [validations.certificate.cn] : [],
 			meta: _.clone(row.meta), // Prevent the update method from changing this value that we'll use later
 		});
 
@@ -683,13 +683,15 @@ const internalCertificate = {
 
 		try {
 			const result = await utils.execFile("openssl", ["x509", "-in", certificateFile, "-subject", "-noout"]);
+
 			// Examples:
 			// subject=CN = *.jc21.com
 			// subject=CN = something.example.com
-			const regex = /(?:subject=)?[^=]+=\s+(\S+)/gim;
+			// subject=CN=*.jc21.com
+			const regex = /(?:subject=)?[^=]+=\s*(\S+)/gim;
 			const match = regex.exec(result);
 			if (match && typeof match[1] !== "undefined") {
-				certData.cn = match[1];
+				certData.cn = match[1].trim();
 			}
 
 			const result2 = await utils.execFile("openssl", ["x509", "-in", certificateFile, "-issuer", "-noout"]);
@@ -779,6 +781,7 @@ const internalCertificate = {
 
 		const args = [
 			"certonly",
+			"-n", // non-interactive
 			"--config",
 			letsencryptConfig,
 			"--work-dir",
@@ -834,6 +837,7 @@ const internalCertificate = {
 
 		const args = [
 			"certonly",
+			"-n", // non-interactive
 			"--config",
 			letsencryptConfig,
 			"--work-dir",
@@ -877,10 +881,20 @@ const internalCertificate = {
 			const result = await utils.execFile(certbotCommand, args, adds.opts);
 			logger.info(result);
 			return result;
-		} catch (err) {
-			// Don't fail if file does not exist, so no need for action in the callback
+		} finally {
+			// Remove the credentials file whether certbot succeeded or failed.
+			//
+			// This cleanup used to sit in a catch block, so it only ran when issuance FAILED.
+			// A certificate that issued successfully left its DNS provider API credentials in
+			// /etc/letsencrypt/credentials for the entire life of that certificate. Nothing
+			// reads the file between certbot runs, so there is no reason to keep it:
+			// renewLetsEncryptSslWithDnsChallenge() writes it again immediately before each
+			// renewal.
+			//
+			// unlink is fire-and-forget with an empty callback. If the file is already gone
+			// that is the end state we wanted anyway, and a missing file must never turn a
+			// successful issuance into a failure.
 			fs.unlink(credentialsLocation, () => {});
-			throw err;
 		}
 	},
 
@@ -977,6 +991,43 @@ const internalCertificate = {
 			`Renewing LetsEncrypt certificates via ${dnsPlugin.name} for Cert #${certificate.id}: ${certificate.domain_names.join(", ")}`,
 		);
 
+		// certbot reads the DNS credentials back from the path recorded in the renewal config
+		// it wrote at issuance time, for example:
+		//
+		//     authenticator = dns-cloudflare
+		//     dns_cloudflare_credentials = /etc/letsencrypt/credentials/credentials-27
+		//
+		// so the file has to be present for the duration of this run. Write it here and remove
+		// it again below rather than leaving it on disk between renewals.
+		//
+		// Leaving it is an avoidable exposure. Anything running as root - a compromised
+		// process, a script, malware - can read the token and use it to issue valid Let's
+		// Encrypt certificates for the domain. Those certificates are genuinely trusted, so
+		// traffic presented with them passes TLS inspection, IDS/IPS and DLP that would
+		// otherwise flag it, and an exfiltration path built on them looks like ordinary
+		// HTTPS. The exposure window should be one certbot run, not the life of the
+		// certificate.
+		//
+		// The value is not on the certificate object we were handed: renew() sources that from
+		// internalCertificate.get(), which pipes the row through utils.omitRow(omissions()) so
+		// meta.dns_provider_credentials can never travel out over the API. Read the row from
+		// the model directly to get at it.
+		const row = await certificateModel.query().where("id", certificate.id).first();
+		const credentials = row?.meta?.dns_provider_credentials;
+		const credentialsLocation = `/etc/letsencrypt/credentials/credentials-${certificate.id}`;
+
+		if (credentials) {
+			fs.mkdirSync("/etc/letsencrypt/credentials", { recursive: true });
+			fs.writeFileSync(credentialsLocation, credentials, { mode: 0o600 });
+		} else {
+			// Nothing stored to write. A certificate issued under the previous behaviour may
+			// still have its file on disk; leave it be and let certbot decide. Throwing here
+			// would break a renewal that would otherwise have succeeded.
+			logger.warn(
+				`No stored DNS credentials for Cert #${certificate.id}; relying on any existing ${credentialsLocation}`,
+			);
+		}
+
 		const args = [
 			"renew",
 			"--force-renewal",
@@ -1004,9 +1055,19 @@ const internalCertificate = {
 
 		logger.info(`Command: ${certbotCommand} ${args ? args.join(" ") : ""}`);
 
-		const result = await utils.execFile(certbotCommand, args, adds.opts);
-		logger.info(result);
-		return result;
+		try {
+			const result = await utils.execFile(certbotCommand, args, adds.opts);
+			logger.info(result);
+			return result;
+		} finally {
+			// Only clean up a file we put there ourselves. If `credentials` came back empty we
+			// wrote nothing, and an older file left on disk by the previous behaviour is the
+			// only thing keeping that certificate renewable - deleting it would break the next
+			// run for no gain.
+			if (credentials) {
+				fs.unlink(credentialsLocation, () => {});
+			}
+		}
 	},
 
 	/**

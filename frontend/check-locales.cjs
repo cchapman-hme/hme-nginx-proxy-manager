@@ -11,7 +11,9 @@ const allLocales = [
   ["de", "de-DE"],
   ["pt", "pt-PT"],
   ["es", "es-ES"],
+  ["et", "et-EE"],
   ["fr", "fr-FR"],
+  ["ga", "ga-IE"],
   ["it", "it-IT"],
   ["ja", "ja-JP"],
   ["nl", "nl-NL"],
@@ -26,6 +28,10 @@ const allLocales = [
   ["id", "id-ID"],
   ["tr", "tr-TR"],
   ["hu", "hu-HU"],
+  ["no", "no-NO"],
+  ["uk", "uk-UA"],
+  ["az", "az-AZ"],
+  ["fa", "fa-IR"],
 ];
 
 const ignoreUnused = [/^.*$/];
