@@ -66,7 +66,7 @@ jobs:
           git remote add upstream "$UPSTREAM_URL"
           git fetch --no-tags upstream master develop
           git fetch upstream 'refs/tags/v*:refs/tags/upstream/v*'
-          git fetch origin develop 'refs/tags/v*-hme.*:refs/tags/v*-hme.*'
+          git fetch origin develop 'refs/tags/*:refs/tags/*'
 
       - name: Find upstream release not yet built
         id: upstream
