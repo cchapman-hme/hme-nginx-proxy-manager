@@ -7,6 +7,7 @@ import errs from "../lib/error.js";
 import utils from "../lib/utils.js";
 import { debug, nginx as logger } from "../logger.js";
 import accessListModel from "../models/access_list.js";
+import certificateModel from "../models/certificate.js";
 import settingModel from "../models/setting.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -231,12 +232,31 @@ const internalNginx = {
 	 * @param   {Object}  host
 	 * @returns {Promise}
 	 */
-	generateConfig: (host_type, host_row, ssoContext = null) => {
+	generateConfig: async (host_type, host_row, ssoContext = null) => {
 		// Prevent modifying the original object:
 		const host = JSON.parse(JSON.stringify(host_row));
 		// Only the SSO sidecar needs the client secret; keep it out of templates and debug logs
 		delete host.sso_client_secret;
 		const nice_host_type = internalNginx.getFileFriendlyHostType(host_type);
+
+		await internalNginx.loadRenderRelations(nice_host_type, host);
+
+		// SSO context for proxy hosts — derive from per-host columns and the
+		// global kill switch (prefetched by bulkGenerateConfigs when available)
+		if (nice_host_type === "proxy_host") {
+			let globalEnabled = false;
+			if (ssoContext) {
+				globalEnabled = !!ssoContext.globalEnabled;
+			} else {
+				try {
+					const row = await settingModel.query().where("id", "sso-enabled").first();
+					globalEnabled = row?.value === "true";
+				} catch (_err) {
+					globalEnabled = false;
+				}
+			}
+			internalNginx.applySsoContext(host, globalEnabled);
+		}
 
 		debug(logger, `Generating ${nice_host_type} Config:`, JSON.stringify(host, null, 2));
 
@@ -292,38 +312,15 @@ const internalNginx = {
 			// Set the IPv6 setting for the host
 			host.ipv6 = internalNginx.ipv6Enabled();
 
-			// SSO context for proxy hosts — derive from per-host columns
-			let ssoPromise = Promise.resolve();
-			if (nice_host_type === "proxy_host") {
-				if (ssoContext) {
-					// Use prefetched context (bulk generation optimization)
-					// Note: sso_client_secret is intentionally NOT checked here — it's
-					// stripped by omissions() for API security. The SSO sidecar reads
-					// secrets directly from the database; nginx never needs them.
-					internalNginx.applySsoContext(host, ssoContext.globalEnabled);
-				} else {
-					ssoPromise = settingModel
-						.query()
-						.where("id", "sso-enabled")
-						.first()
-						.then((row) => {
-							internalNginx.applySsoContext(host, row?.value === "true");
-						})
-						.catch(() => {
-							host.sso_configured = false;
-						});
-				}
+			// Render locations (they inherit the SSO vars), then the main template.
+			let locationsPromise = Promise.resolve();
+			if (host.locations) {
+				locationsPromise = internalNginx.renderLocations(host).then((renderedLocations) => {
+					host.locations = renderedLocations;
+				});
 			}
 
-			// After SSO context is resolved, render locations (they inherit SSO vars),
-			// then render the main template.
-			ssoPromise.then(() => {
-				if (host.locations) {
-					return internalNginx.renderLocations(host).then((renderedLocations) => {
-						host.locations = renderedLocations;
-					});
-				}
-			}).then(() => {
+			locationsPromise.then(() => {
 				renderEngine
 					.parseAndRender(template, host)
 					.then((config_text) => {
@@ -344,6 +341,53 @@ const internalNginx = {
 				reject(new errs.ConfigurationError(err.message));
 			});
 		});
+	},
+
+	/**
+	 * The templates rely on the certificate and access list relations being loaded.
+	 * Not every caller fetches them (or fetches them fully), and when they're missing
+	 * the config silently renders without SSL or without any access rules (#5919).
+	 * Load anything that is referenced but not loaded onto the given host object.
+	 *
+	 * @param   {String}  host_type
+	 * @param   {Object}  host
+	 * @returns {Promise}
+	 */
+	loadRenderRelations: async (host_type, host) => {
+		if (host.certificate_id > 0 && host.certificate?.id !== host.certificate_id) {
+			const certificate = await certificateModel
+				.query()
+				.where("is_deleted", 0)
+				.andWhere("id", host.certificate_id)
+				.first();
+			host.certificate = certificate ? JSON.parse(JSON.stringify(certificate)) : null;
+		}
+
+		if (host_type === "proxy_host" && host.access_list_id > 0) {
+			if (
+				host.access_list?.id !== host.access_list_id ||
+				!Array.isArray(host.access_list.clients) ||
+				!Array.isArray(host.access_list.items)
+			) {
+				const accessList = await accessListModel
+					.query()
+					.where("is_deleted", 0)
+					.andWhere("id", host.access_list_id)
+					.withGraphFetched("[clients,items]")
+					.first();
+				host.access_list = accessList ? JSON.parse(JSON.stringify(accessList)) : null;
+			}
+
+			if (!host.access_list) {
+				logger.warn(
+					`Proxy Host #${host.id} references Access List #${host.access_list_id} which does not exist`,
+				);
+			} else if (!host.access_list.clients.length && !host.access_list.items.length) {
+				logger.warn(
+					`Proxy Host #${host.id} uses Access List #${host.access_list_id} which has no clients or authorizations, no access restrictions will apply`,
+				);
+			}
+		}
 	},
 
 	/**
