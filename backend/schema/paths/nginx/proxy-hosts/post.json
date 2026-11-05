@@ -77,6 +77,24 @@
 						},
 						"locations": {
 							"$ref": "../../../components/proxy-host-object.json#/properties/locations"
+						},
+						"sso_enabled": {
+							"$ref": "../../../components/proxy-host-object.json#/properties/sso_enabled"
+						},
+						"sso_tenant_id": {
+							"$ref": "../../../components/proxy-host-object.json#/properties/sso_tenant_id"
+						},
+						"sso_client_id": {
+							"$ref": "../../../components/proxy-host-object.json#/properties/sso_client_id"
+						},
+						"sso_client_secret": {
+							"$ref": "../../../components/proxy-host-object.json#/properties/sso_client_secret"
+						},
+						"sso_cookie_domain": {
+							"$ref": "../../../components/proxy-host-object.json#/properties/sso_cookie_domain"
+						},
+						"sso_allowed_groups": {
+							"$ref": "../../../components/proxy-host-object.json#/properties/sso_allowed_groups"
 						}
 					}
 				},

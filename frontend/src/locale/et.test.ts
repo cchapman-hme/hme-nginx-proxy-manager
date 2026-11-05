@@ -10,6 +10,7 @@ const allowedIdentical = new Set([
 	"certificates.key-type-ecdsa",
 	"certificates.key-type-rsa",
 	"column.ssl",
+	"column.sso",
 	"lets-encrypt",
 	"object.actions-title",
 	"streams.tcp",

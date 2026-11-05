@@ -7,11 +7,32 @@ import errs from "../lib/error.js";
 import utils from "../lib/utils.js";
 import { debug, nginx as logger } from "../logger.js";
 import accessListModel from "../models/access_list.js";
+import settingModel from "../models/setting.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const internalNginx = {
+	/**
+	 * Derive the SSO template variables for a proxy host.
+	 * The client secret is intentionally not checked: it is stripped from API
+	 * rows by omissions() and only the SSO sidecar needs it. Create/update
+	 * validation guarantees it exists whenever sso_enabled is set.
+	 *
+	 * @param {Object}  host           mutable template context
+	 * @param {Boolean} globalEnabled  value of the sso-enabled kill switch
+	 */
+	applySsoContext: (host, globalEnabled) => {
+		host.sso_configured = !!(globalEnabled && host.sso_enabled && host.sso_tenant_id && host.sso_client_id);
+		// Entra ID does not accept wildcard redirect URIs, so the login redirect
+		// always targets the first concrete domain name of the host.
+		const domains = Array.isArray(host.domain_names) ? host.domain_names : [];
+		host.sso_redirect_host = domains.find((d) => typeof d === "string" && !d.startsWith("*.")) || "";
+		if (!host.sso_redirect_host) {
+			host.sso_configured = false;
+		}
+	},
+
 	/**
 	 * This will:
 	 * - test the nginx config first to make sure it's OK
@@ -166,6 +187,7 @@ const internalNginx = {
 						{ hsts_subdomains: host.hsts_subdomains },
 						{ access_list: host.access_list },
 						{ certificate: host.certificate },
+						{ sso_enabled: host.sso_enabled, sso_configured: host.sso_configured || false },
 						host.locations[i],
 					);
 
@@ -209,9 +231,11 @@ const internalNginx = {
 	 * @param   {Object}  host
 	 * @returns {Promise}
 	 */
-	generateConfig: (host_type, host_row) => {
+	generateConfig: (host_type, host_row, ssoContext = null) => {
 		// Prevent modifying the original object:
 		const host = JSON.parse(JSON.stringify(host_row));
+		// Only the SSO sidecar needs the client secret; keep it out of templates and debug logs
+		delete host.sso_client_secret;
 		const nice_host_type = internalNginx.getFileFriendlyHostType(host_type);
 
 		debug(logger, `Generating ${nice_host_type} Config:`, JSON.stringify(host, null, 2));
@@ -229,7 +253,6 @@ const internalNginx = {
 				return;
 			}
 
-			let locationsPromise;
 			let origLocations;
 
 			// Manipulate the data a bit before sending it to the template
@@ -256,27 +279,51 @@ const internalNginx = {
 				host.forwarding_host = `[${host.forwarding_host}]`;
 			}
 
+			// Check for / in custom locations (sync — must happen before rendering)
 			if (host.locations) {
-				//logger.info ('host.locations = ' + JSON.stringify(host.locations, null, 2));
 				origLocations = [].concat(host.locations);
-				locationsPromise = internalNginx.renderLocations(host).then((renderedLocations) => {
-					host.locations = renderedLocations;
-				});
-
-				// Allow someone who is using / custom location path to use it, and skip the default / location
 				_.map(host.locations, (location) => {
 					if (location.path === "/") {
 						host.use_default_location = false;
 					}
 				});
-			} else {
-				locationsPromise = Promise.resolve();
 			}
 
 			// Set the IPv6 setting for the host
 			host.ipv6 = internalNginx.ipv6Enabled();
 
-			locationsPromise.then(() => {
+			// SSO context for proxy hosts — derive from per-host columns
+			let ssoPromise = Promise.resolve();
+			if (nice_host_type === "proxy_host") {
+				if (ssoContext) {
+					// Use prefetched context (bulk generation optimization)
+					// Note: sso_client_secret is intentionally NOT checked here — it's
+					// stripped by omissions() for API security. The SSO sidecar reads
+					// secrets directly from the database; nginx never needs them.
+					internalNginx.applySsoContext(host, ssoContext.globalEnabled);
+				} else {
+					ssoPromise = settingModel
+						.query()
+						.where("id", "sso-enabled")
+						.first()
+						.then((row) => {
+							internalNginx.applySsoContext(host, row?.value === "true");
+						})
+						.catch(() => {
+							host.sso_configured = false;
+						});
+				}
+			}
+
+			// After SSO context is resolved, render locations (they inherit SSO vars),
+			// then render the main template.
+			ssoPromise.then(() => {
+				if (host.locations) {
+					return internalNginx.renderLocations(host).then((renderedLocations) => {
+						host.locations = renderedLocations;
+					});
+				}
+			}).then(() => {
 				renderEngine
 					.parseAndRender(template, host)
 					.then((config_text) => {
@@ -429,13 +476,24 @@ const internalNginx = {
 	 * @returns {Promise}
 	 */
 	bulkGenerateConfigs: (hostType, hosts) => {
-		const promises = [];
-		hosts.map((host) => {
-			promises.push(internalNginx.generateConfig(hostType, host));
-			return true;
-		});
+		// For proxy hosts, prefetch only the global SSO kill switch
+		let ssoContextPromise = Promise.resolve(null);
+		if (hostType === "proxy_host") {
+			ssoContextPromise = settingModel.query().where("id", "sso-enabled").first().then((row) => {
+				return {
+					globalEnabled: row?.value === "true",
+				};
+			}).catch(() => ({ globalEnabled: false }));
+		}
 
-		return Promise.all(promises);
+		return ssoContextPromise.then((ssoContext) => {
+			const promises = [];
+			hosts.map((host) => {
+				promises.push(internalNginx.generateConfig(hostType, host, ssoContext));
+				return true;
+			});
+			return Promise.all(promises);
+		});
 	},
 
 	/**

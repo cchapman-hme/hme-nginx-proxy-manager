@@ -1,0 +1,20 @@
+{
+	"name": "npm-sso-sidecar",
+	"version": "2.0.0",
+	"type": "module",
+	"private": true,
+	"engines": {
+		"node": ">=22"
+	},
+	"scripts": {
+		"start": "node server.js",
+		"test": "node --test tests/*.test.js"
+	},
+	"dependencies": {
+		"@azure/msal-node": "^3.5.0",
+		"better-sqlite3": "^13.0.3",
+		"express": "^5.3.0",
+		"express-session": "^1.18.2",
+		"mysql2": "^3.24.6"
+	}
+}

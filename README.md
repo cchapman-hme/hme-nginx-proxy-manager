@@ -10,6 +10,11 @@
 	</a>
 </p>
 
+> **HME fork.** This is [cchapman-hme/hme-nginx-proxy-manager](https://github.com/cchapman-hme/hme-nginx-proxy-manager),
+> a fork of [NginxProxyManager/nginx-proxy-manager](https://github.com/NginxProxyManager/nginx-proxy-manager) that adds
+> **Microsoft Entra ID (Azure AD) single sign-on per proxy host**. See [Fork notes](#fork-notes) below; the rest of this
+> README is upstream's.
+
 This project comes as a pre-built Docker image that enables you to easily forward to your websites
 running at home or otherwise, including free SSL, without having to know too much about Nginx or Letsencrypt.
 
@@ -109,3 +114,41 @@ Special thanks to [all of our contributors](https://github.com/NginxProxyManager
 1. [Found a bug?](https://github.com/NginxProxyManager/nginx-proxy-manager/issues)
 2. [Discussions](https://github.com/NginxProxyManager/nginx-proxy-manager/discussions)
 3. [Reddit](https://reddit.com/r/nginxproxymanager)
+
+## Fork notes
+
+### What is added
+
+- **Entra ID SSO per proxy host.** Each proxy host has an *SSO* tab (tenant ID, client ID, client secret, cookie
+  domain, required groups). Protected hosts get an nginx `auth_request` to an internal sidecar that runs the OAuth 2.0
+  authorization-code flow with MSAL. A global kill switch lives under *Settings → Azure SSO*.
+- Design and security details: [backend/sso/README.md](backend/sso/README.md).
+
+### Images
+
+```
+ghcr.io/cchapman-hme/hme-nginx-proxy-manager:latest        # latest fork release
+ghcr.io/cchapman-hme/hme-nginx-proxy-manager:2.16.0        # fork build of upstream 2.16.0
+ghcr.io/cchapman-hme/hme-nginx-proxy-manager:2.16.0-hme.1  # exact release
+ghcr.io/cchapman-hme/hme-nginx-proxy-manager:develop       # tracking build of develop
+```
+
+Example stacks are in [docker/docker-compose.prod.yml](docker/docker-compose.prod.yml) (MariaDB) and
+[docker/docker-compose.greenfield.yml](docker/docker-compose.greenfield.yml) (SQLite). Database passwords are read
+from the environment; never commit them.
+
+### Branches, releases and automation
+
+| Branch    | Role                                                                                     |
+|-----------|------------------------------------------------------------------------------------------|
+| `develop` | Fork development. Merged daily with upstream `develop` by the *Upstream sync and release* workflow. |
+| `master`  | Release branch. Only ever receives upstream release tags and `develop`.                  |
+
+- **One fork release per upstream release.** When upstream publishes `vX.Y.Z`, the daily workflow merges that tag and
+  `develop` into `master`, tags `vX.Y.Z-hme.1`, builds the image and publishes a GitHub Release. The release step runs
+  before `develop` takes new upstream commits, so a release is always *upstream release + fork changes*.
+- **Blocked automation opens an Issue** (labels `upstream-sync` / `release` + `needs-attention`) with the conflicting
+  files and the commands to resolve them. Resolve, push, and close the issue.
+- **CI** ([ci.yml](.github/workflows/ci.yml)) runs backend and frontend lint, unit tests, the SSO sidecar tests and a
+  Docker build on every push and pull request. Pushes to `develop` publish the `develop` image.
+- A release can be rebuilt or cut by hand with the *Release* workflow and a tag of the form `vX.Y.Z-hme.N`.

@@ -92,6 +92,13 @@ export default function Table({
 					return <AccessListFormatter access={info.getValue()} />;
 				},
 			}),
+			columnHelper.accessor((row: any) => row.ssoEnabled, {
+				id: "ssoEnabled",
+				header: intl.formatMessage({ id: "column.sso" }),
+				cell: (info: any) => {
+					return <TrueFalseFormatter value={info.getValue()} trueColor="azure" falseColor="secondary" />;
+				},
+			}),
 			columnHelper.accessor((row: any) => row.enabled, {
 				id: "enabled",
 				header: intl.formatMessage({ id: "column.status" }),

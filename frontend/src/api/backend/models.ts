@@ -154,6 +154,12 @@ export interface ProxyHost {
 	hstsEnabled: boolean;
 	hstsSubdomains: boolean;
 	trustForwardedProto: boolean;
+	ssoEnabled: boolean;
+	ssoTenantId: string;
+	ssoClientId: string;
+	ssoClientSecret: string;
+	ssoCookieDomain: string;
+	ssoAllowedGroups: string[] | null;
 	// Expansions:
 	owner?: User;
 	accessList?: AccessList;

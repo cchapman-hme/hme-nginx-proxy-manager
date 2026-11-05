@@ -6,7 +6,6 @@ import certificateModel from "./models/certificate.js";
 import settingModel from "./models/setting.js";
 import userModel from "./models/user.js";
 import userPermissionModel from "./models/user_permission.js";
-import fs from "node:fs/promises";
 
 export const isSetup = async () => {
 	const row = await userModel.query().select("id").where("is_deleted", 0).first();
@@ -89,6 +88,32 @@ const setupDefaultSettings = async () => {
 };
 
 /**
+ * Creates the SSO kill-switch setting if it doesn't already exist.
+ * Per-host SSO config (tenant, client, secret, etc.) is stored
+ * in the proxy_host table — only the global toggle lives here.
+ *
+ * @returns {Promise}
+ */
+const setupSsoSettings = () => {
+	return settingModel
+		.query()
+		.select(settingModel.raw("COUNT(`id`) as `count`"))
+		.where("id", "sso-enabled")
+		.first()
+		.then((row) => {
+			if (!row.count) {
+				return settingModel.query().insert({
+					id: "sso-enabled",
+					name: "Azure SSO Kill Switch",
+					description: "Global on/off for Azure SSO across all proxy hosts",
+					value: "false",
+					meta: {},
+				});
+			}
+		});
+};
+
+/**
  * Installs all Certbot plugins which are required for an installed certificate
  *
  * @returns {Promise}
@@ -149,4 +174,4 @@ const setupLogrotation = () => {
 	return runLogrotate();
 };
 
-export default () => setupDefaultUser().then(setupDefaultSettings).then(setupCertbotPlugins).then(setupLogrotation);
+export default () => setupDefaultUser().then(setupDefaultSettings).then(setupSsoSettings).then(setupCertbotPlugins).then(setupLogrotation);

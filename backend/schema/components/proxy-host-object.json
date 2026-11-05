@@ -23,7 +23,8 @@
 		"locations",
 		"hsts_enabled",
 		"hsts_subdomains",
-		"trust_forwarded_proto"
+		"trust_forwarded_proto",
+		"sso_enabled"
 	],
 	"properties": {
 		"id": {
@@ -150,6 +151,46 @@
 			"type": "boolean",
 			"description": "Trust the forwarded headers",
 			"example": false
+		},
+		"sso_enabled": {
+			"type": "boolean",
+			"description": "Enable Azure SSO authentication for this proxy host",
+			"example": true
+		},
+		"sso_tenant_id": {
+			"type": "string",
+			"maxLength": 255,
+			"description": "Azure AD Tenant ID for this proxy host",
+			"example": ""
+		},
+		"sso_client_id": {
+			"type": "string",
+			"maxLength": 255,
+			"description": "Azure AD Application (Client) ID for this proxy host",
+			"example": ""
+		},
+		"sso_client_secret": {
+			"type": "string",
+			"maxLength": 512,
+			"description": "Azure AD Client Secret for this proxy host",
+			"example": ""
+		},
+		"sso_cookie_domain": {
+			"type": "string",
+			"maxLength": 255,
+			"description": "Cookie domain for SSO session sharing (e.g. .example.com)",
+			"example": ""
+		},
+		"sso_allowed_groups": {
+			"oneOf": [
+				{ "type": "null" },
+				{
+					"type": "array",
+					"items": { "type": "string" }
+				}
+			],
+			"description": "Azure AD group IDs required to access this host (null = no group restriction)",
+			"example": null
 		},
 		"certificate": {
 			"oneOf": [
