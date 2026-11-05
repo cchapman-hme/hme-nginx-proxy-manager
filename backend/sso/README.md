@@ -1,151 +1,95 @@
-# SSO Sidecar — Azure AD Authentication for Proxy Hosts
+# SSO Sidecar — Microsoft Entra ID authentication for proxy hosts
 
-An internal Express server that provides Azure AD SSO authentication for nginx proxy hosts via the `auth_request` module.
+An internal Express service that adds Microsoft Entra ID (Azure AD) sign-in to
+individual nginx proxy hosts using nginx's `auth_request` module. It is part of
+the `cchapman-hme/hme-nginx-proxy-manager` fork and runs inside the same
+container as Nginx Proxy Manager.
 
 ## Architecture
 
 ```
-Browser → nginx (proxy_host) → /_sso_verify (internal) → SSO sidecar (127.0.0.1:3180)
+Browser → nginx (proxy host) → /_sso_verify (internal) → sidecar 127.0.0.1:3180
                                     │
-                                    ├─ 200 → pass through to upstream
-                                    ├─ 401 → redirect to /sso/login → Azure AD
+                                    ├─ 200 → request is proxied to the upstream
+                                    ├─ 401 → 302 to /sso/login → Entra ID → /sso/callback
                                     └─ 403 → "Group membership required"
 ```
 
-- **Listens on:** `127.0.0.1:3180` (loopback only — never exposed to the internet)
-- **Process manager:** s6-overlay longrun service
-- **Session storage:** SQLite at `/data/sso/sessions.db` (WAL mode, auto-prune every 15 min)
-- **Config source:** Reads `sso-*` settings from NPM's main SQLite database (read-only)
+- **Listens on:** `127.0.0.1:3180` (loopback only; never exposed directly)
+- **Process manager:** s6-overlay longrun service `sso` (`docker/rootfs/etc/s6-overlay/s6-rc.d/sso`)
+- **Session storage:** SQLite at `/data/sso/sessions.db` (WAL mode, pruned every 15 min)
+- **Session secret:** `SSO_SESSION_SECRET` env var, else generated once into `/data/sso/session-secret`
+- **Config source:** the NPM database, read-only. SQLite (`/data/database.sqlite`) or
+  MySQL/MariaDB, auto-detected from the same `DB_MYSQL_*` variables the backend uses.
 
 ## Endpoints
 
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/sso/verify` | GET | nginx internal | `auth_request` handler — returns 200/401/403 |
-| `/sso/login` | GET | Public | Initiates MSAL authorization code flow |
-| `/sso/callback` | GET | Public | Azure AD OAuth callback — exchanges code for token |
-| `/sso/logout` | GET | Public | Destroys session, redirects to Azure AD logout |
-| `/sso/reload` | POST | **Blocked externally** | Reloads config from DB (nginx returns 403) |
-| `/sso/health` | GET | **Blocked externally** | Health check (nginx returns 403) |
+| Endpoint        | Method | Reachable from     | Purpose                                                   |
+|-----------------|--------|--------------------|-----------------------------------------------------------|
+| `/sso/verify`   | GET    | nginx `auth_request` only | Returns 200 / 401 / 403 for the current session   |
+| `/sso/login`    | GET    | Public             | Starts the authorization-code flow                        |
+| `/sso/callback` | GET    | Public             | Exchanges the code for tokens, creates the session        |
+| `/sso/logout`   | GET    | Public             | Destroys the session and signs out of Entra ID            |
+| `/sso/reload`   | POST   | Backend only       | Drops caches after host or setting changes (nginx 403s it)|
+| `/sso/health`   | GET    | Loopback only      | Health check (nginx 403s it)                              |
 
-## Cookie & Cross-Host SSO
-
-SSO works across multiple proxy hosts by setting a shared session cookie on a parent domain:
-
-- **Cookie name:** `npm_sso_sid`
-- **Cookie domain:** Configured via "SSO Cookie Domain" setting (e.g., `.example.com`)
-- **Cookie flags:** `httpOnly`, `secure` (in production), `sameSite: lax`
-- **Max age:** 8 hours
-
-**HTTPS Requirement:** In production (`NODE_ENV=production`), the session cookie is set with the `secure` flag. SSO will not work on HTTP-only proxy hosts — HTTPS is required on all SSO-protected hosts.
+nginx rate-limits `/sso/` to 5 requests/second per client IP (burst 10).
 
 ## Configuration
 
-All settings are stored in the NPM `setting` table and managed via the web UI (Settings → Azure SSO):
+**Global kill switch** — Settings → Azure SSO. Stored as the `sso-enabled` setting.
+When it is off, every host passes through regardless of its own settings.
 
-| Setting ID | Description | Required |
-|------------|-------------|----------|
-| `sso-enabled` | Master switch — enables/disables SSO globally | Yes |
-| `sso-tenant-id` | Azure AD tenant ID (UUID) | Yes |
-| `sso-client-id` | App registration client ID (UUID) | Yes |
-| `sso-client-secret` | App registration client secret | Yes |
-| `sso-cookie-domain` | Parent domain for session cookies (e.g., `.example.com`) | Yes |
-| `sso-redirect-uri` | OAuth2 callback URL (e.g., `https://auth.example.com/sso/callback`) | Yes |
-| `sso-allowed-groups` | JSON array of Azure AD group IDs for global access control | No |
+**Per host** — Proxy Host → SSO tab. Stored on the `proxy_host` row:
 
-### Per-Host Settings
+| Column               | Required | Notes                                                                 |
+|----------------------|----------|-----------------------------------------------------------------------|
+| `sso_enabled`        | yes      | Enables SSO for the host (default off)                                |
+| `sso_tenant_id`      | yes      | Entra ID directory (tenant) ID                                        |
+| `sso_client_id`      | yes      | Application (client) ID of the app registration                       |
+| `sso_client_secret`  | yes      | Client secret. Never returned by the API; leave blank on edit to keep |
+| `sso_cookie_domain`  | no       | e.g. `.example.com` to share one session across subdomains            |
+| `sso_allowed_groups` | no       | JSON array of group object IDs; empty allows any tenant user          |
 
-Each proxy host has:
-- **SSO Enabled** (default: on) — toggle SSO for individual hosts
-- **SSO Forced Groups** — Azure AD group IDs required to access this specific host (overrides global default)
+The redirect URI to register in the app registration is
+`https://<first non-wildcard domain of the host>/sso/callback`. Entra ID does not
+accept wildcard redirect URIs, so a host whose only domain is a wildcard cannot
+use SSO.
 
-## Group Membership Checks
+When `sso_allowed_groups` is set the sidecar requests the delegated Graph scope
+`GroupMember.Read.All` (admin consent required) and reads `/me/memberOf` with
+paging. A failed Graph lookup denies access.
 
-When `sso-allowed-groups` (global) or `sso_forced_groups` (per-host) are configured:
+## Security properties
 
-1. During OAuth callback, the sidecar fetches the user's group memberships from Microsoft Graph API (`/v1.0/me/memberOf`)
-2. On each request, `/sso/verify` checks the stored groups against requirements
-3. Per-host groups are checked first, then global groups
+- Fails closed: database errors during `auth_request` return 503, never 200.
+- OAuth `state` is random, stored server-side, bound to the host that started
+  the login, and single use. The session is regenerated at login start and
+  again after the token exchange (no session fixation).
+- Return URLs are validated: relative paths only, or absolute URLs on the cookie
+  domain or the requesting host. Protocol-relative, backslash, credential and
+  control-character forms are rejected.
+- Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` in production, 8 hour max age.
+- Sessions issued for one tenant are not accepted by hosts of another tenant.
+- Session IDs, codes and tokens are never logged. `Cache-Control: no-store` is
+  set on every response.
+- `/sso/verify`, `/sso/reload` and `/sso/health` return 403 from nginx so they
+  cannot be reached from the internet.
 
-### Known Behavior: Graph API Failures
+## Requirements
 
-If the Microsoft Graph API is unreachable or returns an error during authentication, the user's group list is stored as empty (`[]`). This means:
+- HTTPS on every SSO-protected host (the cookie carries the `Secure` flag when
+  `NODE_ENV=production`, which the image sets).
+- Upstream applications receive `X-SSO-User` and `X-SSO-Email` headers from
+  nginx and should trust them only from this proxy.
 
-- **Users with group restrictions will be denied access** (403) until they re-authenticate with a working Graph API connection
-- This is **fail-closed** behavior (secure but potentially disruptive)
-- There is no grace period or group cache beyond the session lifetime (8 hours)
-
-**Workaround:** If Graph API is down, temporarily remove group restrictions from the SSO settings to restore access.
-
-## Custom Locations
-
-SSO protection is applied to both the default location (`/`) and all custom locations configured on a proxy host. The `auth_request` directive is included via the `_sso.conf` template in both `proxy_host.conf` and `_location.conf`.
-
-## Security Notes
-
-### Session Fixation Protection
-The OAuth callback handler regenerates the session ID after successful authentication (`req.session.regenerate()`). This prevents session fixation attacks where an attacker pre-sets a session cookie on the victim's browser.
-
-### Return URL Validation
-After authentication, the redirect URL is validated:
-- Relative paths (`/dashboard`) are accepted
-- Absolute URLs matching the cookie domain (`https://app.example.com/page`) are accepted
-- Protocol-relative URLs (`//evil.com`) are rejected
-- Foreign domains are rejected
-- Non-HTTP(S) schemes (`javascript:`, `data:`) are rejected
-
-### Rate Limiting
-SSO login endpoints are rate-limited at the nginx level (`5 requests/second` per client IP, burst of 10) to prevent session flooding attacks.
-
-### CSRF on Logout
-The logout endpoint (`GET /sso/logout`) is accessible via GET request. This means a malicious page could trigger a logout via an image tag (`<img src="/sso/logout">`). This is a known trade-off — logout CSRF is generally considered acceptable risk, and changing to POST would require a form submission which degrades the user experience for a low-severity issue.
-
-### Internal Endpoints
-The `/sso/reload` and `/sso/health` endpoints are blocked from external access by nginx exact-match location rules returning 403. They remain accessible internally from the backend via loopback (`127.0.0.1:3180`).
-
-## Database Support
-
-The SSO sidecar auto-detects the database engine from the same environment variables the main NPM app uses:
-
-| Engine | Detection | How it connects |
-|--------|-----------|-----------------|
-| **MySQL/MariaDB** | `DB_MYSQL_HOST`, `DB_MYSQL_USER`, `DB_MYSQL_NAME` all set | `mysql2` connection pool (3 connections) |
-| **SQLite** (default) | No MySQL env vars | `better-sqlite3` read-only on `DB_SQLITE_FILE` or `/data/database.sqlite` |
-
-Session storage always uses a local SQLite file (`/data/sso/sessions.db`) regardless of the main database engine.
-
-## Files
-
-```
-backend/sso/
-├── server.js          — Express server, route handlers
-├── config.js          — Settings reader (NPM database)
-├── session-store.js   — SQLite session store
-├── msal-client.js     — MSAL ConfidentialClientApplication wrapper
-├── group-check.js     — Microsoft Graph group membership checks
-├── validation.js      — Return URL validation
-├── package.json       — Dependencies
-├── README.md          — This file
-└── tests/
-    ├── validation.test.js   — URL validation tests
-    ├── group-check.test.js  — Group membership tests
-    └── config.test.js       — Config parsing tests
-```
-
-## Running Tests
+## Development
 
 ```bash
 cd backend/sso
-node --test tests/
+npm ci
+npm test
 ```
 
-## Troubleshooting
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| SSO login redirects but never completes | Redirect URI mismatch | Ensure `sso-redirect-uri` exactly matches the App Registration's redirect URI |
-| "SSO is not configured" error | Missing required settings | Check all 5 required settings are filled in |
-| 403 "Group membership required" | User not in required group | Add user to the Azure AD group, or remove group restriction |
-| Cookie not shared across hosts | Wrong cookie domain | Set `sso-cookie-domain` to the parent domain (e.g., `.example.com`) |
-| SSO doesn't work on HTTP hosts | Secure cookie flag | Use HTTPS on all SSO-protected proxy hosts |
-| Groups denied after Graph API outage | Fail-closed behavior | Remove group restrictions temporarily, or wait for users to re-authenticate |
+Environment overrides: `SSO_PORT`, `SSO_DATA_DIR`, `SSO_DB_PATH`,
+`SSO_SESSION_DB_PATH`, `SSO_SESSION_SECRET`, `SSO_SECURE_COOKIE=true`.

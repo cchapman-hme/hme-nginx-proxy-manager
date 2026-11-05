@@ -10,25 +10,31 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = join(__dirname, "..", "..", "migrations");
 
 describe("SSO migration module format", () => {
-	const ssoMigrations = [
-		"20260318000000_sso_per_host.js",
-		"20260318000001_sso_cleanup_settings.js",
-	];
+	const ssoMigrations = ["20260318000000_sso_per_host.js", "20260318000001_sso_cleanup_settings.js"];
 
 	for (const filename of ssoMigrations) {
 		describe(filename, () => {
 			const content = readFileSync(join(migrationsDir, filename), "utf8");
 
 			it("does NOT use CommonJS exports.up", () => {
-				assert.ok(!content.includes("exports.up"), `${filename} uses CommonJS exports.up — will crash in ESM project`);
+				assert.ok(
+					!content.includes("exports.up"),
+					`${filename} uses CommonJS exports.up — will crash in ESM project`,
+				);
 			});
 
 			it("does NOT use CommonJS exports.down", () => {
-				assert.ok(!content.includes("exports.down"), `${filename} uses CommonJS exports.down — will crash in ESM project`);
+				assert.ok(
+					!content.includes("exports.down"),
+					`${filename} uses CommonJS exports.down — will crash in ESM project`,
+				);
 			});
 
 			it("does NOT use module.exports", () => {
-				assert.ok(!content.includes("module.exports"), `${filename} uses module.exports — will crash in ESM project`);
+				assert.ok(
+					!content.includes("module.exports"),
+					`${filename} uses module.exports — will crash in ESM project`,
+				);
 			});
 
 			it("uses 'export { up, down }' pattern", () => {
@@ -46,10 +52,7 @@ describe("SSO migration module format", () => {
 			});
 
 			it("defines a migrateName constant", () => {
-				assert.ok(
-					content.includes("const migrateName"),
-					`${filename} should define a migrateName for logging`,
-				);
+				assert.ok(content.includes("const migrateName"), `${filename} should define a migrateName for logging`);
 			});
 		});
 	}

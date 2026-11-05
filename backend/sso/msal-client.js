@@ -1,15 +1,20 @@
 // backend/sso/msal-client.js
-// MSAL ConfidentialClientApplication wrapper for Azure AD auth code flow.
-// Supports multiple app registrations via Map cache keyed by tenantId:clientId.
+// MSAL ConfidentialClientApplication wrapper for the Entra ID auth code flow.
+// Supports multiple app registrations via a cache keyed by tenantId:clientId.
 
 import { ConfidentialClientApplication } from "@azure/msal-node";
 
 const _clients = new Map();
 
 const BASE_SCOPES = ["openid", "profile", "email"];
+const GROUP_SCOPE = "https://graph.microsoft.com/GroupMember.Read.All";
 
 function clientKey(cfg) {
 	return `${cfg.tenantId}:${cfg.clientId}`;
+}
+
+function scopesFor(includeGroups) {
+	return includeGroups ? [...BASE_SCOPES, GROUP_SCOPE] : [...BASE_SCOPES];
 }
 
 /**
@@ -31,7 +36,7 @@ export function getMsalClient(hostConfig) {
 	client = new ConfidentialClientApplication({
 		auth: {
 			clientId: hostConfig.clientId,
-			authority: `https://login.microsoftonline.com/${hostConfig.tenantId}`,
+			authority: `https://login.microsoftonline.com/${encodeURIComponent(hostConfig.tenantId)}`,
 			clientSecret: hostConfig.clientSecret,
 		},
 	});
@@ -48,12 +53,11 @@ export function getMsalClient(hostConfig) {
  * @returns {Promise<string>}
  */
 export async function getAuthCodeUrl(hostConfig, state, redirectUri, includeGroups = false) {
-	const scopes = [...BASE_SCOPES];
-	if (includeGroups) scopes.push("GroupMember.Read.All");
 	return getMsalClient(hostConfig).getAuthCodeUrl({
-		scopes,
+		scopes: scopesFor(includeGroups),
 		redirectUri,
 		state,
+		responseMode: "query",
 		prompt: "select_account",
 	});
 }
@@ -61,17 +65,15 @@ export async function getAuthCodeUrl(hostConfig, state, redirectUri, includeGrou
 /**
  * Exchange auth code for token.
  * @param {{ tenantId: string, clientId: string, clientSecret: string }} hostConfig
- * @param {string} code - Authorization code from Azure AD
+ * @param {string} code - Authorization code from Entra ID
  * @param {string} redirectUri - Must match the one used in getAuthCodeUrl
  * @param {boolean} includeGroups - Whether to request group membership scope
- * @returns {Promise<object>}
+ * @returns {Promise<import("@azure/msal-node").AuthenticationResult>}
  */
 export async function acquireTokenByCode(hostConfig, code, redirectUri, includeGroups = false) {
-	const scopes = [...BASE_SCOPES];
-	if (includeGroups) scopes.push("GroupMember.Read.All");
 	return getMsalClient(hostConfig).acquireTokenByCode({
 		code,
-		scopes,
+		scopes: scopesFor(includeGroups),
 		redirectUri,
 	});
 }

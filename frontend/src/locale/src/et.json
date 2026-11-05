@@ -326,6 +326,9 @@
 	"column.ssl": {
 		"defaultMessage": "SSL"
 	},
+	"column.sso": {
+		"defaultMessage": "SSO"
+	},
 	"column.status": {
 		"defaultMessage": "Olek"
 	},
@@ -457,6 +460,42 @@
 	},
 	"host.forward-scheme": {
 		"defaultMessage": "Skeem"
+	},
+	"host.sso-enabled": {
+		"defaultMessage": "Azure'i SSO"
+	},
+	"host.sso-enabled.description": {
+		"defaultMessage": "Nõua selle proksihosti jaoks Microsoft Entra ID (Azure AD) sisselogimist"
+	},
+	"host.sso.allowed-groups": {
+		"defaultMessage": "Nõutavad Azure AD rühmad"
+	},
+	"host.sso.allowed-groups.description": {
+		"defaultMessage": "Komadega eraldatud Entra ID rühmade objekti ID-d. Jäta tühjaks, et lubada kõik rentniku sisseloginud kasutajad"
+	},
+	"host.sso.client-id": {
+		"defaultMessage": "Azure AD kliendi ID"
+	},
+	"host.sso.client-secret": {
+		"defaultMessage": "Azure AD kliendi saladus"
+	},
+	"host.sso.client-secret.keep": {
+		"defaultMessage": "Jäta tühjaks, et säilitada olemasolev saladus"
+	},
+	"host.sso.cookie-domain": {
+		"defaultMessage": "Küpsise domeen"
+	},
+	"host.sso.cookie-domain.description": {
+		"defaultMessage": "Sama küpsise domeeniga hostid jagavad SSO seansse"
+	},
+	"host.sso.redirect-uri": {
+		"defaultMessage": "Ümbersuunamise URI (genereeritakse automaatselt)"
+	},
+	"host.sso.redirect-uri.description": {
+		"defaultMessage": "Registreeri see URI oma Azure AD rakenduse registreeringus"
+	},
+	"host.sso.tenant-id": {
+		"defaultMessage": "Azure AD rentniku ID"
 	},
 	"hosts": {
 		"defaultMessage": "Hostid"
@@ -745,6 +784,24 @@
 	},
 	"settings.default-site.redirect": {
 		"defaultMessage": "Ümbersuunamine"
+	},
+	"settings.sso": {
+		"defaultMessage": "Azure'i SSO"
+	},
+	"settings.sso.enabled": {
+		"defaultMessage": "Luba Azure'i SSO"
+	},
+	"settings.sso.https-note": {
+		"defaultMessage": "SSO nõuab kõigil kaitstud proksihostidel HTTPS-i. Seansiküpsised kasutavad tootmises Secure-lippu ega tööta tavalise HTTP kaudu."
+	},
+	"settings.sso.killswitch.description": {
+		"defaultMessage": "Kui see on keelatud, ei kasuta ükski proksihost SSO-d, sõltumata hosti enda seadetest"
+	},
+	"settings.sso.per-host-info": {
+		"defaultMessage": "SSO seadistatakse iga proksihosti kohta eraldi. Kasuta seda lülitit üldise väljalülitina, et keelata SSO kõigil hostidel."
+	},
+	"settings.sso.save-warning": {
+		"defaultMessage": "Salvestamine genereerib kõigi proksihostide nginxi konfiguratsioonid uuesti."
 	},
 	"setup.preamble": {
 		"defaultMessage": "Alustuseks loo endale administraatori konto."

@@ -10,17 +10,17 @@ const migrateName = "sso_fields";
  * @param   {Object} knex
  * @returns {Promise}
  */
-const up = function (knex) {
-    logger.info(`[${migrateName}] Migrating Up...`);
+const up = (knex) => {
+	logger.info(`[${migrateName}] Migrating Up...`);
 
-    return knex.schema
-        .alterTable('proxy_host', (table) => {
-            table.tinyint('sso_enabled').notNullable().defaultTo(1);
-            table.text('sso_forced_groups').nullable().defaultTo(null);
-        })
-        .then(() => {
-            logger.info(`[${migrateName}] proxy_host Table altered`);
-        });
+	return knex.schema
+		.alterTable("proxy_host", (table) => {
+			table.tinyint("sso_enabled").notNullable().defaultTo(1);
+			table.text("sso_forced_groups").nullable().defaultTo(null);
+		})
+		.then(() => {
+			logger.info(`[${migrateName}] proxy_host Table altered`);
+		});
 };
 
 /**
@@ -29,17 +29,17 @@ const up = function (knex) {
  * @param   {Object} knex
  * @returns {Promise}
  */
-const down = function (knex) {
-    logger.info(`[${migrateName}] Migrating Down...`);
+const down = (knex) => {
+	logger.info(`[${migrateName}] Migrating Down...`);
 
-    return knex.schema
-        .alterTable('proxy_host', (table) => {
-            table.dropColumn('sso_enabled');
-            table.dropColumn('sso_forced_groups');
-        })
-        .then(() => {
-            logger.info(`[${migrateName}] proxy_host Table altered`);
-        });
+	return knex.schema
+		.alterTable("proxy_host", (table) => {
+			table.dropColumn("sso_enabled");
+			table.dropColumn("sso_forced_groups");
+		})
+		.then(() => {
+			logger.info(`[${migrateName}] proxy_host Table altered`);
+		});
 };
 
 export { up, down };

@@ -45,10 +45,7 @@ describe("saveLoginSessionAndRedirect", () => {
 		await saveFinished;
 		await pending;
 
-		assert.equal(
-			redirectUrl,
-			"https://login.microsoftonline.com/example/oauth2/v2.0/authorize",
-		);
+		assert.equal(redirectUrl, "https://login.microsoftonline.com/example/oauth2/v2.0/authorize");
 	});
 
 	it("sanitizes the return URL before saving the session", async () => {

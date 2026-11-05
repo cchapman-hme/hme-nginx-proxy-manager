@@ -27,13 +27,18 @@ describe("SSO logout redirect safety", () => {
 		});
 
 		it("allows absolute URL matching cookie domain", () => {
-			const uri = buildLogoutRedirectUri("https://app.example.com/page", COOKIE_DOMAIN, "https", "app.example.com");
+			const uri = buildLogoutRedirectUri(
+				"https://app.example.com/page",
+				COOKIE_DOMAIN,
+				"https",
+				"app.example.com",
+			);
 			assert.equal(uri, "https://app.example.com/page");
 		});
 
 		it("defaults to / when no return param provided", () => {
 			const rawReturn = undefined;
-			const fallback = rawReturn || `https://app.example.com/`;
+			const fallback = rawReturn || "https://app.example.com/";
 			const uri = buildLogoutRedirectUri(fallback, COOKIE_DOMAIN, "https", "app.example.com");
 			assert.equal(uri, "https://app.example.com/");
 		});
@@ -73,7 +78,12 @@ describe("SSO logout redirect safety", () => {
 
 		it("never sends attacker URL to Azure AD", () => {
 			const tenantId = "my-tenant-id";
-			const postLogoutUri = buildLogoutRedirectUri("https://evil.com/steal", COOKIE_DOMAIN, "https", "app.example.com");
+			const postLogoutUri = buildLogoutRedirectUri(
+				"https://evil.com/steal",
+				COOKIE_DOMAIN,
+				"https",
+				"app.example.com",
+			);
 			const azureUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/logout?post_logout_redirect_uri=${encodeURIComponent(postLogoutUri)}`;
 			assert.ok(!azureUrl.includes("evil.com"));
 			assert.ok(azureUrl.includes(encodeURIComponent("https://app.example.com/")));

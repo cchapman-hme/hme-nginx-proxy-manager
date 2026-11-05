@@ -1,7 +1,13 @@
 // Tests for SSO validation helpers — field validation and change detection.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validateSsoFields, hasSsoRelevantChanges, SSO_REQUIRED_FIELDS, SSO_RELEVANT_FIELDS } from "../../lib/sso-helpers.js";
+import {
+	hasSsoRelevantChanges,
+	normaliseCookieDomain,
+	SSO_RELEVANT_FIELDS,
+	SSO_REQUIRED_FIELDS,
+	validateSsoFields,
+} from "../../lib/sso-helpers.js";
 
 describe("validateSsoFields", () => {
 	describe("when sso_enabled is false/falsy (should always pass)", () => {
@@ -120,12 +126,15 @@ describe("hasSsoRelevantChanges", () => {
 			assert.equal(hasSsoRelevantChanges({}), false);
 		});
 		it("returns false for non-SSO fields", () => {
-			assert.equal(hasSsoRelevantChanges({
-				forward_host: "example.com",
-				forward_port: 80,
-				ssl_forced: true,
-				certificate_id: 5,
-			}), false);
+			assert.equal(
+				hasSsoRelevantChanges({
+					forward_host: "example.com",
+					forward_port: 80,
+					ssl_forced: true,
+					certificate_id: 5,
+				}),
+				false,
+			);
 		});
 		it("returns false when only id is present", () => {
 			assert.equal(hasSsoRelevantChanges({ id: 42 }), false);
@@ -134,11 +143,62 @@ describe("hasSsoRelevantChanges", () => {
 
 	describe("mixed payloads", () => {
 		it("returns true when SSO field is mixed with other fields", () => {
-			assert.equal(hasSsoRelevantChanges({
-				forward_host: "example.com",
-				sso_enabled: true,
-				certificate_id: 3,
-			}), true);
+			assert.equal(
+				hasSsoRelevantChanges({
+					forward_host: "example.com",
+					sso_enabled: true,
+					certificate_id: 3,
+				}),
+				true,
+			);
 		});
+	});
+});
+
+describe("validateSsoFields domain and access list rules", () => {
+	const base = { sso_enabled: true, sso_tenant_id: "t", sso_client_id: "c", sso_client_secret: "s" };
+	it("requires a cookie domain when the host has several domain names", () => {
+		const r = validateSsoFields({ ...base, domain_names: ["a.example.com", "b.example.com"] });
+		assert.equal(r.valid, false);
+		assert.deepEqual(r.missing, ["sso_cookie_domain"]);
+	});
+	it("requires a cookie domain when the host has a wildcard domain", () => {
+		const r = validateSsoFields({ ...base, domain_names: ["app.example.com", "*.example.com"] });
+		assert.equal(r.valid, false);
+		assert.deepEqual(r.missing, ["sso_cookie_domain"]);
+	});
+	it("accepts several domains with a cookie domain", () => {
+		const r = validateSsoFields({
+			...base,
+			domain_names: ["a.example.com", "*.example.com"],
+			sso_cookie_domain: ".example.com",
+		});
+		assert.equal(r.valid, true);
+	});
+	it("rejects wildcard-only hosts", () => {
+		const r = validateSsoFields({ ...base, domain_names: ["*.example.com"], sso_cookie_domain: ".example.com" });
+		assert.equal(r.valid, false);
+		assert.equal(r.errors.length, 1);
+	});
+	it("rejects an access list on the same host", () => {
+		const r = validateSsoFields({ ...base, domain_names: ["a.example.com"], access_list_id: 3 });
+		assert.equal(r.valid, false);
+		assert.match(r.errors[0], /access list/);
+	});
+	it("ignores access_list_id 0", () => {
+		const r = validateSsoFields({ ...base, domain_names: ["a.example.com"], access_list_id: 0 });
+		assert.equal(r.valid, true);
+	});
+});
+
+describe("normaliseCookieDomain", () => {
+	it("turns a wildcard into a parent-domain cookie and lowercases", () => {
+		assert.equal(normaliseCookieDomain(" *.Example.COM "), ".example.com");
+	});
+	it("keeps a plain domain", () => {
+		assert.equal(normaliseCookieDomain(".example.com"), ".example.com");
+	});
+	it("returns empty string for nullish", () => {
+		assert.equal(normaliseCookieDomain(null), "");
 	});
 });

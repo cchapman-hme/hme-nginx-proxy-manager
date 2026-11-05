@@ -9,13 +9,18 @@ cd /app/sso || exit 1
 
 log_info 'Starting SSO sidecar ...'
 
-# Install dependencies if needed
 if [ ! -d "node_modules" ]; then
-  s6-setuidgid "$PUID:$PGID" npm install --production
+	# Dependencies are installed at image build time (docker/Dockerfile).
+	# In development the backend's node_modules are shared via the volume.
+	if [ "${DEVELOPMENT:-}" = 'true' ]; then
+		s6-setuidgid "$PUID:$PGID" npm ci --omit=dev
+	else
+		log_fatal 'SSO sidecar dependencies are missing from the image'
+	fi
 fi
 
 while :
 do
-  s6-setuidgid "$PUID:$PGID" bash -c "export HOME=$NPMHOME;node --abort_on_uncaught_exception server.js"
-  sleep 1
+	s6-setuidgid "$PUID:$PGID" bash -c "export HOME=$NPMHOME;node --abort_on_uncaught_exception server.js"
+	sleep 1
 done

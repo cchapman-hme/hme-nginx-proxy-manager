@@ -323,11 +323,11 @@
 	"column.source": {
 		"defaultMessage": "Source"
 	},
-	"column.sso": {
-		"defaultMessage": "SSO"
-	},
 	"column.ssl": {
 		"defaultMessage": "SSL"
+	},
+	"column.sso": {
+		"defaultMessage": "SSO"
 	},
 	"column.status": {
 		"defaultMessage": "Status"
@@ -465,10 +465,13 @@
 		"defaultMessage": "Azure SSO"
 	},
 	"host.sso-enabled.description": {
-		"defaultMessage": "Require Azure AD SSO authentication for this proxy host"
+		"defaultMessage": "Require Microsoft Entra ID (Azure AD) sign-in for this proxy host"
 	},
-	"host.sso.tenant-id": {
-		"defaultMessage": "Azure AD Tenant ID"
+	"host.sso.allowed-groups": {
+		"defaultMessage": "Required Azure AD Groups"
+	},
+	"host.sso.allowed-groups.description": {
+		"defaultMessage": "Comma-separated Entra ID group object IDs. Leave empty to allow any signed-in user of the tenant"
 	},
 	"host.sso.client-id": {
 		"defaultMessage": "Azure AD Client ID"
@@ -476,23 +479,23 @@
 	"host.sso.client-secret": {
 		"defaultMessage": "Azure AD Client Secret"
 	},
+	"host.sso.client-secret.keep": {
+		"defaultMessage": "Leave blank to keep the existing secret"
+	},
 	"host.sso.cookie-domain": {
 		"defaultMessage": "Cookie Domain"
 	},
 	"host.sso.cookie-domain.description": {
 		"defaultMessage": "Hosts sharing the same cookie domain share SSO sessions"
 	},
-	"host.sso.allowed-groups": {
-		"defaultMessage": "Required Azure AD Groups"
-	},
-	"host.sso.allowed-groups.description": {
-		"defaultMessage": "Comma-separated Azure AD group IDs (at least one required when SSO is enabled)"
-	},
 	"host.sso.redirect-uri": {
 		"defaultMessage": "Redirect URI (auto-generated)"
 	},
 	"host.sso.redirect-uri.description": {
 		"defaultMessage": "Register this URI in your Azure AD App Registration"
+	},
+	"host.sso.tenant-id": {
+		"defaultMessage": "Azure AD Tenant ID"
 	},
 	"hosts": {
 		"defaultMessage": "Hosts"
@@ -785,20 +788,20 @@
 	"settings.sso": {
 		"defaultMessage": "Azure SSO"
 	},
-	"settings.sso.per-host-info": {
-		"defaultMessage": "SSO is configured per proxy host. Use this toggle as a global kill switch to disable SSO across all hosts."
-	},
 	"settings.sso.enabled": {
 		"defaultMessage": "Enable Azure SSO"
+	},
+	"settings.sso.https-note": {
+		"defaultMessage": "SSO requires HTTPS on all protected proxy hosts. Session cookies use the Secure flag in production and will not work over plain HTTP."
 	},
 	"settings.sso.killswitch.description": {
 		"defaultMessage": "When disabled, no proxy host will use SSO regardless of its per-host settings"
 	},
+	"settings.sso.per-host-info": {
+		"defaultMessage": "SSO is configured per proxy host. Use this toggle as a global kill switch to disable SSO across all hosts."
+	},
 	"settings.sso.save-warning": {
 		"defaultMessage": "Saving will regenerate all proxy host nginx configs."
-	},
-	"settings.sso.https-note": {
-		"defaultMessage": "SSO requires HTTPS on all protected proxy hosts. Session cookies use the Secure flag in production and will not work over plain HTTP."
 	},
 	"setup.preamble": {
 		"defaultMessage": "Get started by creating your admin account."

@@ -12,7 +12,7 @@ export class SsoSessionStore extends session.Store {
 	constructor() {
 		super();
 		const dir = dirname(SESSION_DB_PATH);
-		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+		if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 		this.db = new Database(SESSION_DB_PATH);
 		this.db.pragma("journal_mode = WAL");
 		this.db.exec(`

@@ -41,23 +41,14 @@ describe("isGroupMember", () => {
 	});
 
 	describe("UUID group IDs (real-world format)", () => {
-		const userGroups = [
-			"550e8400-e29b-41d4-a716-446655440000",
-			"6ba7b810-9dad-11d1-80b4-00c04fd430c8",
-		];
-		const required = [
-			"6ba7b810-9dad-11d1-80b4-00c04fd430c8",
-			"f47ac10b-58cc-4372-a567-0e02b2c3d479",
-		];
+		const userGroups = ["550e8400-e29b-41d4-a716-446655440000", "6ba7b810-9dad-11d1-80b4-00c04fd430c8"];
+		const required = ["6ba7b810-9dad-11d1-80b4-00c04fd430c8", "f47ac10b-58cc-4372-a567-0e02b2c3d479"];
 
 		it("matches UUID group IDs correctly", () => {
 			assert.equal(isGroupMember(userGroups, required), true);
 		});
 		it("rejects when no UUID matches", () => {
-			assert.equal(
-				isGroupMember(userGroups, ["f47ac10b-58cc-4372-a567-0e02b2c3d479"]),
-				false,
-			);
+			assert.equal(isGroupMember(userGroups, ["f47ac10b-58cc-4372-a567-0e02b2c3d479"]), false);
 		});
 	});
 
@@ -67,5 +58,14 @@ describe("isGroupMember", () => {
 			const required = ["group-999"];
 			assert.equal(isGroupMember(userGroups, required), true);
 		});
+	});
+});
+
+describe("isGroupMember with unknown memberships", () => {
+	it("denies when user groups are null (lookup failed)", () => {
+		assert.equal(isGroupMember(null, ["a"]), false);
+	});
+	it("compares group IDs case-insensitively", () => {
+		assert.equal(isGroupMember(["ABC"], ["abc"]), true);
 	});
 });

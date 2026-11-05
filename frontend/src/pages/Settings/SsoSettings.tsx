@@ -48,19 +48,11 @@ export default function SsoSettings() {
 	};
 
 	return (
-		<Formik
-			initialValues={{ enabled: ssoEnabled.data?.value === "true" }}
-			onSubmit={onSubmit}
-		>
+		<Formik initialValues={{ enabled: ssoEnabled.data?.value === "true" }} onSubmit={onSubmit}>
 			{() => (
 				<Form>
 					<div className="card-body">
-						<Alert
-							variant="danger"
-							show={!!errorMsg}
-							onClose={() => setErrorMsg(null)}
-							dismissible
-						>
+						<Alert variant="danger" show={!!errorMsg} onClose={() => setErrorMsg(null)} dismissible>
 							{errorMsg}
 						</Alert>
 						<Alert variant="info" show>

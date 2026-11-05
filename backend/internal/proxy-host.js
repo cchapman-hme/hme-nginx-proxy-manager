@@ -1,7 +1,7 @@
 import _ from "lodash";
 import errs from "../lib/error.js";
 import { castJsonIfNeed } from "../lib/helpers.js";
-import { validateSsoFields as _validateSsoFields, hasSsoRelevantChanges } from "../lib/sso-helpers.js";
+import { validateSsoFields as _validateSsoFields, hasSsoRelevantChanges, normaliseCookieDomain } from "../lib/sso-helpers.js";
 import utils from "../lib/utils.js";
 import { global as logger } from "../logger.js";
 import proxyHostModel from "../models/proxy_host.js";
@@ -31,9 +31,11 @@ function notifySsoSidecar() {
 function validateSsoFields(data) {
 	const result = _validateSsoFields(data);
 	if (!result.valid) {
-		throw new errs.ValidationError(
-			`SSO is enabled but the following fields are required: ${result.missing.join(", ")}`,
-		);
+		const problems = [...result.errors];
+		if (result.missing.length) {
+			problems.push(`the following fields are required: ${result.missing.join(", ")}`);
+		}
+		throw new errs.ValidationError(`SSO is enabled but ${problems.join("; ")}`);
 	}
 }
 
@@ -45,7 +47,7 @@ const omissions = () => {
  * Sensitive fields to strip from audit log meta in addition to standard omissions.
  */
 const auditOmissions = () => {
-	return [...omissions(), "sso_client_secret"];
+	return [...omissions()];
 };
 
 const internalProxyHost = {
@@ -89,6 +91,9 @@ const internalProxyHost = {
 
 				// Validate SSO fields if SSO is being enabled
 				validateSsoFields(thisData);
+				if (typeof thisData.sso_cookie_domain === "string") {
+					thisData.sso_cookie_domain = normaliseCookieDomain(thisData.sso_cookie_domain);
+				}
 
 				// Fix for db field not having a default value
 				// for this optional field.
@@ -223,10 +228,28 @@ const internalProxyHost = {
 
 				thisData = internalHost.cleanSslHstsData(thisData, row);
 
-				// Validate SSO fields: merge existing row with update data to check completeness
-				const mergedForValidation = _.assign({}, row, thisData);
-				validateSsoFields(mergedForValidation);
+				// The client secret is never returned by the API, so an empty value in
+				// an update means "keep the stored secret".
+				if (typeof thisData.sso_client_secret !== "undefined" && String(thisData.sso_client_secret).trim() === "") {
+					delete thisData.sso_client_secret;
+				}
+				if (typeof thisData.sso_cookie_domain === "string") {
+					thisData.sso_cookie_domain = normaliseCookieDomain(thisData.sso_cookie_domain);
+				}
 
+				// Validate SSO fields: merge the stored row (including its secret, which
+				// omissions() strips from API output) with the update data
+				return proxyHostModel
+					.query()
+					.select("sso_client_secret")
+					.where("id", row.id)
+					.first()
+					.then((secretRow) => {
+						validateSsoFields(_.assign({}, row, secretRow || {}, thisData));
+						return row;
+					});
+			})
+			.then((row) => {
 				return proxyHostModel
 					.query()
 					.where({ id: thisData.id })

@@ -14,6 +14,26 @@ const __dirname = dirname(__filename);
 
 const internalNginx = {
 	/**
+	 * Derive the SSO template variables for a proxy host.
+	 * The client secret is intentionally not checked: it is stripped from API
+	 * rows by omissions() and only the SSO sidecar needs it. Create/update
+	 * validation guarantees it exists whenever sso_enabled is set.
+	 *
+	 * @param {Object}  host           mutable template context
+	 * @param {Boolean} globalEnabled  value of the sso-enabled kill switch
+	 */
+	applySsoContext: (host, globalEnabled) => {
+		host.sso_configured = !!(globalEnabled && host.sso_enabled && host.sso_tenant_id && host.sso_client_id);
+		// Entra ID does not accept wildcard redirect URIs, so the login redirect
+		// always targets the first concrete domain name of the host.
+		const domains = Array.isArray(host.domain_names) ? host.domain_names : [];
+		host.sso_redirect_host = domains.find((d) => typeof d === "string" && !d.startsWith("*.")) || "";
+		if (!host.sso_redirect_host) {
+			host.sso_configured = false;
+		}
+	},
+
+	/**
 	 * This will:
 	 * - test the nginx config first to make sure it's OK
 	 * - create / recreate the config for the host
@@ -214,6 +234,8 @@ const internalNginx = {
 	generateConfig: (host_type, host_row, ssoContext = null) => {
 		// Prevent modifying the original object:
 		const host = JSON.parse(JSON.stringify(host_row));
+		// Only the SSO sidecar needs the client secret; keep it out of templates and debug logs
+		delete host.sso_client_secret;
 		const nice_host_type = internalNginx.getFileFriendlyHostType(host_type);
 
 		debug(logger, `Generating ${nice_host_type} Config:`, JSON.stringify(host, null, 2));
@@ -278,25 +300,18 @@ const internalNginx = {
 					// Note: sso_client_secret is intentionally NOT checked here — it's
 					// stripped by omissions() for API security. The SSO sidecar reads
 					// secrets directly from the database; nginx never needs them.
-					host.sso_configured = ssoContext.globalEnabled && host.sso_enabled && !!(
-						host.sso_tenant_id &&
-						host.sso_client_id &&
-						host.sso_cookie_domain
-					);
-					host.sso_redirect_host = host.domain_names?.[0] || "";
+					internalNginx.applySsoContext(host, ssoContext.globalEnabled);
 				} else {
-					ssoPromise = settingModel.query().where("id", "sso-enabled").first().then((row) => {
-						const globalEnabled = row?.value === "true";
-						// Note: sso_client_secret intentionally NOT checked — see comment above
-						host.sso_configured = globalEnabled && host.sso_enabled && !!(
-							host.sso_tenant_id &&
-							host.sso_client_id &&
-							host.sso_cookie_domain
-						);
-						host.sso_redirect_host = host.domain_names?.[0] || "";
-					}).catch(() => {
-						host.sso_configured = false;
-					});
+					ssoPromise = settingModel
+						.query()
+						.where("id", "sso-enabled")
+						.first()
+						.then((row) => {
+							internalNginx.applySsoContext(host, row?.value === "true");
+						})
+						.catch(() => {
+							host.sso_configured = false;
+						});
 				}
 			}
 
