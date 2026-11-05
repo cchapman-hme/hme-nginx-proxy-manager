@@ -4,7 +4,7 @@
 # SSO sidecar auto-detects DB_MYSQL_* and connects to the same MariaDB instance.
 #
 # Image is built and pushed automatically by GitHub Actions.
-# See: .github/workflows/build-push.yml
+# See: .github/workflows/release.yml (releases) and ci.yml (develop builds)
 #
 # Deploy via Portainer: paste this YAML as a stack.
 
@@ -20,7 +20,7 @@ services:
       DB_MYSQL_HOST: "db"
       DB_MYSQL_PORT: 3306
       DB_MYSQL_USER: "npm"
-      DB_MYSQL_PASSWORD: "5^Jpe4cldSn6"
+      DB_MYSQL_PASSWORD: "${NPM_DB_PASSWORD:?Set NPM_DB_PASSWORD in the stack environment}"
       DB_MYSQL_NAME: "npm"
       DISABLE_IPV6: "true"
     volumes:
@@ -35,10 +35,10 @@ services:
     image: jc21/mariadb-aria:latest
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: "npm"
+      MYSQL_ROOT_PASSWORD: "${NPM_MYSQL_ROOT_PASSWORD:?Set NPM_MYSQL_ROOT_PASSWORD in the stack environment}"
       MYSQL_DATABASE: "npm"
       MYSQL_USER: "npm"
-      MYSQL_PASSWORD: "5^Jpe4cldSn6"
+      MYSQL_PASSWORD: "${NPM_DB_PASSWORD:?Set NPM_DB_PASSWORD in the stack environment}"
       MARIADB_AUTO_UPGRADE: "1"
     volumes:
       - /var/docker/nginx-proxy-manager/mysql:/var/lib/mysql

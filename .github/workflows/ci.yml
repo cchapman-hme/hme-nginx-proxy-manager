@@ -1,0 +1,161 @@
+name: CI
+
+# Lint, test and build on every push and pull request. On pushes to develop
+# (and when called from the upstream sync) the image is also pushed to GHCR
+# with the `develop` tag. Releases are built by release.yml.
+
+on:
+  push:
+    branches: [develop, master]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build
+        type: string
+        required: false
+        default: ""
+      push_image:
+        description: Push the develop image to GHCR
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  backend:
+    name: Backend lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+          cache-dependency-path: backend/yarn.lock
+      - name: Install
+        working-directory: backend
+        run: yarn install --frozen-lockfile
+      - name: Lint
+        working-directory: backend
+        run: yarn lint .
+
+  sso:
+    name: SSO sidecar tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/sso/package-lock.json
+      - name: Install
+        working-directory: backend/sso
+        run: npm ci
+      - name: Test
+        working-directory: backend/sso
+        run: npm test
+      - name: Audit production dependencies
+        working-directory: backend/sso
+        run: npm audit --omit=dev --audit-level=high
+
+  frontend:
+    name: Frontend lint, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - name: Install
+        working-directory: frontend
+        run: yarn install --frozen-lockfile
+      - name: Lint
+        working-directory: frontend
+        run: yarn lint
+      - name: Compile locales
+        working-directory: frontend
+        run: yarn locale-compile
+      - name: Unit tests
+        working-directory: frontend
+        run: yarn vitest run --no-color
+      - name: Build
+        working-directory: frontend
+        run: yarn build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  docker:
+    name: Docker image
+    needs: [backend, sso, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUSH: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/develop') || inputs.push_image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - name: Build date
+        id: date
+        run: echo "now=$(date -u '+%Y-%m-%d %T %Z')" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=develop
+            type=sha,prefix=sha-,format=short
+      - name: Build (and push on develop)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=develop
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.date.outputs.now }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

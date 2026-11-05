@@ -4,7 +4,7 @@
 #   sudo docker compose -f docker-compose.greenfield.yml up -d
 #
 # Image is built and pushed automatically by GitHub Actions.
-# See: .github/workflows/build-push.yml
+# See: .github/workflows/release.yml (releases) and ci.yml (develop builds)
 #
 # This is the simplest deployment: single container, SQLite for storage.
 # All features work including SSO.

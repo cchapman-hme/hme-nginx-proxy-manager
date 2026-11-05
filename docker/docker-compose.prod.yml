@@ -4,7 +4,7 @@
 #   sudo docker compose -f docker-compose.prod.yml up -d
 #
 # Image is built and pushed automatically by GitHub Actions.
-# See: .github/workflows/build-push.yml
+# See: .github/workflows/release.yml (releases) and ci.yml (develop builds)
 #
 # This preserves your existing MariaDB data. Mount the same volumes
 # your jc21 deployment used. All features including SSO are supported.

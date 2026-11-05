@@ -1,0 +1,286 @@
+name: Upstream sync and release
+
+# Daily automation for the fork:
+#   1. release-check : if upstream has published a release we have not built
+#                      yet, merge that tag and develop into master, tag
+#                      vX.Y.Z-hme.N and hand off to release.yml.
+#   2. sync-develop  : merge upstream/develop into develop so the fork keeps
+#                      tracking upstream.
+#   3. ci-develop    : run CI (and push the develop image) for the merged branch,
+#                      because pushes made with GITHUB_TOKEN do not trigger it.
+# Whenever a merge cannot be done automatically an Issue is opened (or the open
+# one is updated) with the conflicting files and the commands to resolve them.
+#
+# Order matters: the release is cut from develop *before* develop takes new
+# upstream commits, so every fork release equals the upstream release plus the
+# fork's own changes.
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      skip_release:
+        description: Skip the release check
+        type: boolean
+        default: false
+      skip_sync:
+        description: Skip the develop sync
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: NginxProxyManager/nginx-proxy-manager
+  UPSTREAM_URL: https://github.com/NginxProxyManager/nginx-proxy-manager.git
+  GIT_AUTHOR_NAME: github-actions[bot]
+  GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+  GIT_COMMITTER_NAME: github-actions[bot]
+  GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+
+jobs:
+  release-check:
+    name: Release check
+    if: ${{ !inputs.skip_release }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream master develop
+          git fetch upstream 'refs/tags/v*:refs/tags/upstream/v*'
+          git fetch origin develop 'refs/tags/v*-hme.*:refs/tags/v*-hme.*'
+
+      - name: Find upstream release not yet built
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LATEST=$(gh api "repos/$UPSTREAM_REPO/releases/latest" --jq '.tag_name')
+          [[ "$LATEST" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Unexpected upstream tag '$LATEST'"; exit 1; }
+          git rev-parse -q --verify "refs/tags/upstream/$LATEST" >/dev/null || { echo "::error::Tag $LATEST not fetched"; exit 1; }
+          if git tag --list "${LATEST}-hme.*" | grep -q .; then
+            echo "Fork already has a release for $LATEST: $(git tag --list "${LATEST}-hme.*" | tr '\n' ' ')"
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream $LATEST has no fork release yet"
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream release and develop into master
+        if: steps.upstream.outputs.pending == 'true'
+        id: merge
+        run: |
+          set -o pipefail
+          LATEST="${{ steps.upstream.outputs.latest }}"
+          merge_or_report() {
+            local ref="$1" label="$2"
+            if git merge --no-ff --no-edit -m "Merge $label into master for $LATEST release" "$ref"; then
+              return 0
+            fi
+            # .version is set below from the upstream tag, so a conflict there is harmless
+            local conflicts
+            conflicts=$(git diff --name-only --diff-filter=U)
+            if [ "$conflicts" = ".version" ]; then
+              git show "refs/tags/upstream/$LATEST:.version" > .version
+              git add .version && git -c core.editor=true merge --continue
+              return 0
+            fi
+            {
+              echo "conflicts<<EOF"
+              echo "$conflicts"
+              echo "EOF"
+              echo "failed_ref=$label"
+            } >> "$GITHUB_OUTPUT"
+            git merge --abort
+            return 1
+          }
+          merge_or_report "refs/tags/upstream/$LATEST" "upstream $LATEST" || { echo "result=conflict" >> "$GITHUB_OUTPUT"; exit 0; }
+          merge_or_report origin/develop "develop" || { echo "result=conflict" >> "$GITHUB_OUTPUT"; exit 0; }
+          # Pin the version file to the upstream release
+          git show "refs/tags/upstream/$LATEST:.version" | tr -d '[:space:]' > .version
+          echo >> .version
+          if ! git diff --quiet -- .version; then
+            git add .version
+            git commit -m "Set version to $(cat .version) for release"
+          fi
+          echo "result=merged" >> "$GITHUB_OUTPUT"
+
+      - name: Tag and push master
+        if: steps.merge.outputs.result == 'merged'
+        id: tag
+        run: |
+          LATEST="${{ steps.upstream.outputs.latest }}"
+          TAG="${LATEST}-hme.1"
+          git tag -a "$TAG" -m "Fork release $TAG (upstream $LATEST)"
+          git push origin master "refs/tags/$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Tagged $TAG"
+
+      - name: Open or update blocking issue
+        if: steps.merge.outputs.result == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          FAILED_REF: ${{ steps.merge.outputs.failed_ref }}
+          LATEST: ${{ steps.upstream.outputs.latest }}
+        run: |
+          TITLE="Release blocked: upstream $LATEST cannot be merged into master"
+          BODY=$(cat <<EOF
+          Automatic release of upstream **$LATEST** is blocked. Merging **$FAILED_REF** into \`master\` conflicts in:
+
+          \`\`\`
+          $CONFLICTS
+          \`\`\`
+
+          ### Resolve
+
+          \`\`\`bash
+          git fetch origin && git checkout master && git pull
+          git remote add upstream $UPSTREAM_URL 2>/dev/null; git fetch upstream --tags
+          git merge $LATEST            # resolve, then: git add -A && git commit
+          git merge origin/develop     # resolve, then: git add -A && git commit
+          echo ${LATEST#v} > .version && git commit -am "Set version"
+          git tag -a ${LATEST}-hme.1 -m "Fork release ${LATEST}-hme.1" && git push origin master ${LATEST}-hme.1
+          \`\`\`
+
+          Then run the **Release** workflow with tag \`${LATEST}-hme.1\`, and close this issue.
+
+          _Opened automatically by the "Upstream sync and release" workflow (run ${{ github.run_id }})._
+          EOF
+          )
+          EXISTING=$(gh issue list --label release --label needs-attention --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "Still blocked as of run ${{ github.run_id }}. Conflicting files: \`$(echo "$CONFLICTS" | tr '\n' ' ')\`"
+          else
+            gh issue create --title "$TITLE" --label release --label needs-attention --body "$BODY"
+          fi
+          echo "::warning::Release of $LATEST blocked by merge conflicts; see issue"
+
+  release:
+    name: Publish release
+    needs: release-check
+    if: needs.release-check.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-check.outputs.tag }}
+    secrets: inherit
+
+  sync-develop:
+    name: Sync develop with upstream
+    needs: [release-check]
+    if: ${{ always() && !inputs.skip_sync && (needs.release-check.result == 'success' || needs.release-check.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    outputs:
+      pushed: ${{ steps.push.outputs.pushed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Fetch upstream develop
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream develop
+
+      - name: Merge
+        id: merge
+        run: |
+          COUNT=$(git rev-list --count HEAD..upstream/develop)
+          echo "new_commits=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "develop is up to date with upstream"
+            echo "result=noop" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$COUNT new upstream commit(s)"
+          if git merge --no-edit -m "Merge upstream/develop into develop ($COUNT commits)" upstream/develop; then
+            echo "result=merged" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "conflicts<<EOF"
+              git diff --name-only --diff-filter=U
+              echo "EOF"
+              echo "result=conflict"
+            } >> "$GITHUB_OUTPUT"
+            git merge --abort
+          fi
+
+      - name: Push develop
+        if: steps.merge.outputs.result == 'merged'
+        id: push
+        run: |
+          git push origin develop
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update blocking issue
+        if: steps.merge.outputs.result == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          COUNT: ${{ steps.merge.outputs.new_commits }}
+        run: |
+          TITLE="Upstream sync blocked: merge conflicts on develop"
+          BODY=$(cat <<EOF
+          Automatic merge of **$COUNT** upstream commit(s) into \`develop\` conflicts in:
+
+          \`\`\`
+          $CONFLICTS
+          \`\`\`
+
+          ### Resolve
+
+          \`\`\`bash
+          git fetch origin && git checkout develop && git pull
+          git remote add upstream $UPSTREAM_URL 2>/dev/null; git fetch upstream develop
+          git merge upstream/develop   # resolve conflicts, then: git add -A && git commit
+          git push origin develop
+          \`\`\`
+
+          The next scheduled run closes nothing automatically; close this issue once develop is merged.
+
+          _Opened automatically by the "Upstream sync and release" workflow (run ${{ github.run_id }})._
+          EOF
+          )
+          EXISTING=$(gh issue list --label upstream-sync --label needs-attention --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "Still blocked as of run ${{ github.run_id }} ($COUNT upstream commits pending). Conflicting files: \`$(echo "$CONFLICTS" | tr '\n' ' ')\`"
+          else
+            gh issue create --title "$TITLE" --label upstream-sync --label needs-attention --body "$BODY"
+          fi
+          echo "::warning::develop sync blocked by merge conflicts; see issue"
+
+      - name: Close resolved issues
+        if: steps.merge.outputs.result != 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for n in $(gh issue list --label upstream-sync --label needs-attention --state open --json number --jq '.[].number'); do
+            gh issue close "$n" --comment "develop now merges cleanly with upstream (run ${{ github.run_id }})."
+          done
+
+  ci-develop:
+    name: CI for merged develop
+    needs: sync-develop
+    if: needs.sync-develop.outputs.pushed == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: develop
+      push_image: true
+    secrets: inherit

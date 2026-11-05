@@ -11,7 +11,7 @@ services:
       DB_MYSQL_HOST: "db"
       DB_MYSQL_PORT: 3306
       DB_MYSQL_USER: "npm"
-      DB_MYSQL_PASSWORD: "5^Jpe4cldSn6"
+      DB_MYSQL_PASSWORD: "${NPM_DB_PASSWORD:?Set NPM_DB_PASSWORD in the stack environment}"
       DB_MYSQL_NAME: "npm"
       DISABLE_IPV6: 'true'
     volumes:
