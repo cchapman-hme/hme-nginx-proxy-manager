@@ -29,9 +29,12 @@ on:
         type: boolean
         default: false
 
+# Called workflows (release.yml, ci.yml) cannot elevate permissions, so the
+# caller must hold everything they need.
 permissions:
   contents: write
   issues: write
+  packages: write
 
 concurrency:
   group: upstream-sync
