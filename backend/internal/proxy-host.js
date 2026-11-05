@@ -122,29 +122,29 @@ const internalProxyHost = {
 					expand: ["certificate", "owner", "access_list.[clients,items]"],
 				});
 			})
-			.then((row) => {
-				// Configure nginx
-				return internalNginx.configure(proxyHostModel, "proxy_host", row).then(() => {
-					const notify = hasSsoRelevantChanges(thisData) ? notifySsoSidecar() : Promise.resolve();
-					return notify.then(() => row);
-				});
-			})
-			.then((row) => {
-				// Audit log
-				thisData.meta = _.assign({}, thisData.meta || {}, row.meta);
-
-				// Add to audit log
-				return internalAuditLog
-					.add(access, {
-						action: "created",
-						object_type: "proxy-host",
-						object_id: row.id,
-						meta: _.omit(thisData, auditOmissions()),
-					})
-					.then(() => {
-						return row;
-					});
+		.then(async (row) => {
+			// Configure nginx
+			return internalNginx.configure(proxyHostModel, "proxy_host", row).then(() => {
+				const notify = hasSsoRelevantChanges(thisData) ? notifySsoSidecar() : Promise.resolve();
+				return notify.then(() => row);
 			});
+		})
+		.then((row) => {
+			// Audit log
+			thisData.meta = _.assign({}, thisData.meta || {}, row.meta);
+
+			// Add to audit log
+			return internalAuditLog
+				.add(access, {
+					action: "created",
+					object_type: "proxy-host",
+					object_id: row.id,
+					meta: _.omit(thisData, auditOmissions()),
+				})
+				.then(() => {
+					return row;
+				});
+		});
 	},
 
 	/**
@@ -246,27 +246,25 @@ const internalProxyHost = {
 							});
 					});
 			})
-			.then(() => {
-				return internalProxyHost
-					.get(access, {
-						id: thisData.id,
-						expand: ["owner", "certificate", "access_list.[clients,items]"],
-					})
-					.then((row) => {
-						if (!row.enabled) {
-							// No need to add nginx config if host is disabled
-							return row;
-						}
-						// Configure nginx
-						return internalNginx.configure(proxyHostModel, "proxy_host", row).then((new_meta) => {
-							row.meta = new_meta;
-							const notify = hasSsoRelevantChanges(data) ? notifySsoSidecar() : Promise.resolve();
-							return notify.then(() =>
-								_.omit(internalHost.cleanRowCertificateMeta(row), omissions()),
-							);
-						});
+		.then(() => {
+			return internalProxyHost
+				.get(access, {
+					id: thisData.id,
+					expand: ["owner", "certificate", "access_list.[clients,items]"],
+				})
+				.then(async (row) => {
+					if (!row.enabled) {
+						// No need to add nginx config if host is disabled
+						return row;
+					}
+					// Configure nginx
+					return internalNginx.configure(proxyHostModel, "proxy_host", row).then((new_meta) => {
+						row.meta = new_meta;
+						const notify = hasSsoRelevantChanges(data) ? notifySsoSidecar() : Promise.resolve();
+						return notify.then(() => _.omit(internalHost.cleanRowCertificateMeta(row), omissions()));
 					});
-			});
+				});
+		});
 	},
 
 	/**
@@ -373,40 +371,37 @@ const internalProxyHost = {
 					expand: ["certificate", "owner", "access_list"],
 				});
 			})
-			.then((row) => {
-				if (!row?.id) {
-					throw new errs.ItemNotFoundError(data.id);
-				}
-				if (row.enabled) {
-					throw new errs.ValidationError("Host is already enabled");
-				}
+		.then(async (row) => {
+			if (!row?.id) {
+				throw new errs.ItemNotFoundError(data.id);
+			}
+			if (row.enabled) {
+				throw new errs.ValidationError("Host is already enabled");
+			}
 
-				row.enabled = 1;
+			row.enabled = 1;
 
-				return proxyHostModel
-					.query()
-					.where("id", row.id)
-					.patch({
-						enabled: 1,
-					})
-					.then(() => {
-						// Configure nginx
-						return internalNginx.configure(proxyHostModel, "proxy_host", row)
-							.then(() => notifySsoSidecar());
-					})
-					.then(() => {
-						// Add to audit log
-						return internalAuditLog.add(access, {
-							action: "enabled",
-							object_type: "proxy-host",
-							object_id: row.id,
-							meta: _.omit(row, auditOmissions()),
-						});
-					});
-			})
-			.then(() => {
-				return true;
+			await proxyHostModel
+				.query()
+				.where("id", row.id)
+				.patch({
+					enabled: 1,
+				});
+
+			// Configure nginx
+			await internalNginx.configure(proxyHostModel, "proxy_host", row);
+			await notifySsoSidecar();
+
+			// Add to audit log
+			await internalAuditLog.add(access, {
+				action: "enabled",
+				object_type: "proxy-host",
+				object_id: row.id,
+				meta: _.omit(row, auditOmissions()),
 			});
+
+			return true;
+		});
 	},
 
 	/**
