@@ -149,18 +149,31 @@ export function sanitiseCookieDomain(value) {
 }
 
 /**
+ * Read proxy_host.domain_names. mysql2 returns the JSON column already parsed;
+ * SQLite returns JSON text.
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function parseDomainNames(value) {
+	let parsed = value;
+	if (typeof value === "string") {
+		try {
+			parsed = JSON.parse(value);
+		} catch (_err) {
+			return [];
+		}
+	}
+	return Array.isArray(parsed) ? parsed : [];
+}
+
+/**
  * Build the config object for one proxy_host row.
  * @param {object} row
  * @returns {HostConfig | null}
  */
-function rowToHostConfig(row) {
-	let domains;
-	try {
-		domains = JSON.parse(row.domain_names || "[]");
-	} catch (_err) {
-		return null;
-	}
-	if (!Array.isArray(domains) || domains.length === 0) return null;
+export function rowToHostConfig(row) {
+	const domains = parseDomainNames(row.domain_names);
+	if (domains.length === 0) return null;
 
 	const primary = domains.map(normaliseHostname).find((d) => d && !d.startsWith("*."));
 
