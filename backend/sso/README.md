@@ -12,7 +12,7 @@ Browser → nginx (proxy host) → /_sso_verify (internal) → sidecar 127.0.0.1
                                     │
                                     ├─ 200 → request is proxied to the upstream
                                     ├─ 401 → 302 to /sso/login → Entra ID → /sso/callback
-                                    └─ 403 → "Group membership required"
+                                    └─ 403 → error_page → @sso_denied → /sso/denied page
 ```
 
 - **Listens on:** `127.0.0.1:3180` (loopback only; never exposed directly)
@@ -30,6 +30,7 @@ Browser → nginx (proxy host) → /_sso_verify (internal) → sidecar 127.0.0.1
 | `/sso/login`    | GET    | Public             | Starts the authorization-code flow                        |
 | `/sso/callback` | GET    | Public             | Exchanges the code for tokens, creates the session        |
 | `/sso/logout`   | GET    | Public             | Destroys the session and signs out of Entra ID            |
+| `/sso/denied`   | GET    | nginx `error_page 403` | Access-denied page: who is signed in, use a different account, sign out |
 | `/sso/reload`   | POST   | Backend only       | Drops caches after host or setting changes (nginx 403s it)|
 | `/sso/health`   | GET    | Loopback only      | Health check (nginx 403s it)                              |
 
@@ -59,6 +60,21 @@ use SSO.
 When `sso_allowed_groups` is set the sidecar requests the delegated Graph scope
 `GroupMember.Read.All` (admin consent required) and reads `/me/memberOf` with
 paging. A failed Graph lookup denies access.
+
+## Access-denied page
+
+nginx sends every 403 it raises itself on an SSO host to the sidecar
+(`error_page 403 = @sso_denied`): a failed group check, an access list, the
+blocked internal endpoints. Upstream 403s pass through unchanged. The page
+(`pages.js`, no scripts, strict CSP) explains the denial, shows the signed-in
+account, and offers:
+
+- **Sign in with a different account**: `/sso/login` on the host's first
+  concrete domain (the one the callback uses, so it also works from a
+  secondary domain), returning to the denied page. Entra ID always shows its
+  account picker, and picking the same account again re-reads its groups.
+- **Sign out**: `/sso/logout`.
+- Details to send to an administrator: site, page, account, reason, time.
 
 ## Security properties
 
