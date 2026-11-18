@@ -20,6 +20,7 @@ import {
 import { fetchUserGroups, isGroupMember } from "./group-check.js";
 import { saveLoginSessionAndRedirect } from "./login-session.js";
 import { acquireTokenByCode, getAuthCodeUrl, resetAllClients } from "./msal-client.js";
+import { deniedPage, loginUrlFor, PAGE_CSP } from "./pages.js";
 import { SsoSessionStore } from "./session-store.js";
 import { headerSafe, queryString, rawReturnParam, validateReturnUrl } from "./validation.js";
 
@@ -339,6 +340,53 @@ app.get(
 				res.redirect(safeReturn);
 			}
 		});
+	}),
+);
+
+// ---------------------------------------------------------------------------
+// GET /sso/denied — the access-denied page. nginx serves it for every 403 it
+// raises itself on an SSO host (error_page 403 = @sso_denied), passing the
+// denied request URI in X-Original-URI. It names the signed-in account and
+// offers another one; upstream 403s never come here.
+// ---------------------------------------------------------------------------
+app.get(
+	"/sso/denied",
+	route(async (req, res) => {
+		const host = originalHost(req);
+		const hostCfg = await loadHostConfig(host).catch(() => null);
+		const candidate = req.session?.ssoUser;
+		// A session from another tenant is not this host's sign-in
+		const user = candidate && hostCfg && candidate.tenantId === hostCfg.tenantId ? candidate : null;
+		const groupDenied =
+			!!user &&
+			hostCfg.allowedGroups.length > 0 &&
+			!!user.groupsFetched &&
+			!isGroupMember(user.groups || [], hostCfg.allowedGroups);
+
+		const uri = req.headers["x-original-uri"];
+		let path = validateReturnUrl(typeof uri === "string" ? uri : "", hostCfg?.cookieDomain, host);
+		// Never send the user back to a sidecar URL (e.g. a blocked /sso/verify)
+		if (!path.startsWith("/") || path.startsWith("/sso/")) path = "/";
+
+		const html = deniedPage({
+			host,
+			user,
+			reason: groupDenied ? "group" : "",
+			path,
+			loginUrl: loginUrlFor({
+				scheme: req.protocol,
+				host,
+				redirectUri: hostCfg?.redirectUri,
+				path,
+			}),
+			logoutUrl: "/sso/logout",
+		});
+		res.status(403);
+		res.set("Content-Type", "text/html; charset=utf-8");
+		res.set("Content-Security-Policy", PAGE_CSP);
+		res.set("X-Content-Type-Options", "nosniff");
+		res.set("Referrer-Policy", "no-referrer");
+		return res.send(html);
 	}),
 );
 
