@@ -173,15 +173,15 @@ describe("/sso/me", () => {
 		assert.deepEqual(await res.json(), { signedIn: true, name: "Pat Example", email: "pat@example.test" });
 		assert.equal(res.headers.get("access-control-allow-origin"), null);
 	});
-	it("is 401 without a session", async () => {
+	it("says signed out (200) without a session", async () => {
 		const res = await get("/sso/me");
-		assert.equal(res.status, 401);
+		assert.equal(res.status, 200);
 		assert.deepEqual(await res.json(), { signedIn: false });
 	});
-	it("is 401 for an unknown host", async () => {
+	it("says signed out for an unknown host", async () => {
 		const { cookie } = sessionCookie(user([ALLOWED]));
 		const res = await get("/sso/me", { cookie, headers: { "X-Original-Host": "other.example.test" } });
-		assert.equal(res.status, 401);
+		assert.deepEqual(await res.json(), { signedIn: false });
 	});
 });
 

@@ -447,8 +447,9 @@ app.get(
 		const hostCfg = await loadHostConfig(host).catch(() => null);
 		const user = sessionUserFor(req, hostCfg);
 		res.set("X-Content-Type-Options", "nosniff");
+		// 200 either way: a page asks on every load, and a 401 would log an error in its console
 		if (!user) {
-			return res.status(401).json({ signedIn: false });
+			return res.json({ signedIn: false });
 		}
 		return res.json({
 			signedIn: true,

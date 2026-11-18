@@ -32,7 +32,7 @@ Browser → nginx (proxy host) → /_sso_verify (internal) → sidecar 127.0.0.1
 | `/sso/logout`   | GET    | Public             | Destroys the session and signs out of Entra ID            |
 | `/sso/signed-out` | GET  | Public             | Landing page after sign-out, with a sign-in button        |
 | `/sso/denied`   | GET    | nginx `error_page 403` | 403 page: who is signed in, use a different account, sign out |
-| `/sso/me`       | GET    | Public (same origin) | `{signedIn, name, email}` for the site's own account menu; 401 when signed out |
+| `/sso/me`       | GET    | Public (same origin) | `{signedIn, name, email}` for the site's own account menu (200 when signed out too) |
 | `/sso/reload`   | POST   | Backend only       | Drops caches after host or setting changes (nginx 403s it)|
 | `/sso/health`   | GET    | Loopback only      | Health check (nginx 403s it)                              |
 
