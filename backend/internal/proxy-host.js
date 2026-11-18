@@ -4,7 +4,7 @@ import { castJsonIfNeed } from "../lib/helpers.js";
 import { validateSsoFields as _validateSsoFields, hasSsoRelevantChanges, normaliseCookieDomain } from "../lib/sso-helpers.js";
 import utils from "../lib/utils.js";
 import { global as logger } from "../logger.js";
-import proxyHostModel from "../models/proxy_host.js";
+import proxyHostModel, { scopeToOwnerOrAllowed } from "../models/proxy_host.js";
 import internalAuditLog from "./audit-log.js";
 import internalCertificate from "./certificate.js";
 import internalHost from "./host.js";
@@ -15,11 +15,9 @@ import internalNginx from "./nginx.js";
  * Fire-and-forget — logs a warning if the sidecar is unreachable.
  */
 function notifySsoSidecar() {
-	return fetch("http://127.0.0.1:3180/sso/reload", { method: "POST" }).catch(
-		(err) => {
-			logger.warn(`[proxy-host] SSO sidecar notification failed: ${err.message}`);
-		},
-	);
+	return fetch("http://127.0.0.1:3180/sso/reload", { method: "POST" }).catch((err) => {
+		logger.warn(`[proxy-host] SSO sidecar notification failed: ${err.message}`);
+	});
 }
 
 /**
@@ -101,6 +99,8 @@ const internalProxyHost = {
 					thisData.advanced_config = "";
 				}
 
+				internalHost.assertAdvancedConfigAllowed(access, thisData);
+
 				return proxyHostModel.query().insertAndFetch(thisData).then(utils.omitRow(omissions()));
 			})
 			.then((row) => {
@@ -127,29 +127,29 @@ const internalProxyHost = {
 					expand: ["certificate", "owner", "access_list.[clients,items]"],
 				});
 			})
-		.then(async (row) => {
-			// Configure nginx
-			return internalNginx.configure(proxyHostModel, "proxy_host", row).then(() => {
-				const notify = hasSsoRelevantChanges(thisData) ? notifySsoSidecar() : Promise.resolve();
-				return notify.then(() => row);
-			});
-		})
-		.then((row) => {
-			// Audit log
-			thisData.meta = _.assign({}, thisData.meta || {}, row.meta);
-
-			// Add to audit log
-			return internalAuditLog
-				.add(access, {
-					action: "created",
-					object_type: "proxy-host",
-					object_id: row.id,
-					meta: _.omit(thisData, auditOmissions()),
-				})
-				.then(() => {
-					return row;
+			.then(async (row) => {
+				// Configure nginx
+				return internalNginx.configure(proxyHostModel, "proxy_host", row).then(() => {
+					const notify = hasSsoRelevantChanges(thisData) ? notifySsoSidecar() : Promise.resolve();
+					return notify.then(() => row);
 				});
-		});
+			})
+			.then((row) => {
+				// Audit log
+				thisData.meta = _.assign({}, thisData.meta || {}, row.meta);
+
+				// Add to audit log
+				return internalAuditLog
+					.add(access, {
+						action: "created",
+						object_type: "proxy-host",
+						object_id: row.id,
+						meta: _.omit(thisData, auditOmissions()),
+					})
+					.then(() => {
+						return row;
+					});
+			});
 	},
 
 	/**
@@ -199,6 +199,9 @@ const internalProxyHost = {
 						`Proxy Host could not be updated, IDs do not match: ${row.id} !== ${thisData.id}`,
 					);
 				}
+
+				// Before the certificate is created, so a refused request doesn't leave one behind
+				internalHost.assertAdvancedConfigAllowed(access, thisData, row);
 
 				if (createCertificate) {
 					return internalCertificate
@@ -269,25 +272,25 @@ const internalProxyHost = {
 							});
 					});
 			})
-		.then(() => {
-			return internalProxyHost
-				.get(access, {
-					id: thisData.id,
-					expand: ["owner", "certificate", "access_list.[clients,items]"],
-				})
-				.then(async (row) => {
-					if (!row.enabled) {
-						// No need to add nginx config if host is disabled
-						return row;
-					}
-					// Configure nginx
-					return internalNginx.configure(proxyHostModel, "proxy_host", row).then((new_meta) => {
-						row.meta = new_meta;
-						const notify = hasSsoRelevantChanges(data) ? notifySsoSidecar() : Promise.resolve();
-						return notify.then(() => _.omit(internalHost.cleanRowCertificateMeta(row), omissions()));
+			.then(() => {
+				return internalProxyHost
+					.get(access, {
+						id: thisData.id,
+						expand: ["owner", "certificate", "access_list.[clients,items]"],
+					})
+					.then(async (row) => {
+						if (!row.enabled) {
+							// No need to add nginx config if host is disabled
+							return row;
+						}
+						// Configure nginx
+						return internalNginx.configure(proxyHostModel, "proxy_host", row).then((new_meta) => {
+							row.meta = new_meta;
+							const notify = hasSsoRelevantChanges(data) ? notifySsoSidecar() : Promise.resolve();
+							return notify.then(() => _.omit(internalHost.cleanRowCertificateMeta(row), omissions()));
+						});
 					});
-				});
-		});
+			});
 	},
 
 	/**
@@ -311,7 +314,7 @@ const internalProxyHost = {
 					.first();
 
 				if (access_data.permission_visibility !== "all") {
-					query.andWhere("owner_user_id", access.token.getUserId(1));
+					scopeToOwnerOrAllowed(query, access.token.getUserId(1), access.getPermissions?.()?.meta);
 				}
 
 				if (typeof thisData.expand !== "undefined" && thisData.expand !== null) {
@@ -359,7 +362,8 @@ const internalProxyHost = {
 					})
 					.then(() => {
 						// Delete Nginx Config
-						return internalNginx.deleteConfig("proxy_host", row)
+						return internalNginx
+							.deleteConfig("proxy_host", row)
 							.then(() => notifySsoSidecar())
 							.then(() => internalNginx.reload());
 					})
@@ -391,40 +395,37 @@ const internalProxyHost = {
 			.then(() => {
 				return internalProxyHost.get(access, {
 					id: data.id,
-					expand: ["certificate", "owner", "access_list"],
+					expand: ["certificate", "owner", "access_list.[clients,items]"],
 				});
 			})
-		.then(async (row) => {
-			if (!row?.id) {
-				throw new errs.ItemNotFoundError(data.id);
-			}
-			if (row.enabled) {
-				throw new errs.ValidationError("Host is already enabled");
-			}
+			.then(async (row) => {
+				if (!row?.id) {
+					throw new errs.ItemNotFoundError(data.id);
+				}
+				if (row.enabled) {
+					throw new errs.ValidationError("Host is already enabled");
+				}
 
-			row.enabled = 1;
+				row.enabled = 1;
 
-			await proxyHostModel
-				.query()
-				.where("id", row.id)
-				.patch({
+				await proxyHostModel.query().where("id", row.id).patch({
 					enabled: 1,
 				});
 
-			// Configure nginx
-			await internalNginx.configure(proxyHostModel, "proxy_host", row);
-			await notifySsoSidecar();
+				// Configure nginx
+				await internalNginx.configure(proxyHostModel, "proxy_host", row);
+				await notifySsoSidecar();
 
-			// Add to audit log
-			await internalAuditLog.add(access, {
-				action: "enabled",
-				object_type: "proxy-host",
-				object_id: row.id,
-				meta: _.omit(row, auditOmissions()),
+				// Add to audit log
+				await internalAuditLog.add(access, {
+					action: "enabled",
+					object_type: "proxy-host",
+					object_id: row.id,
+					meta: _.omit(row, auditOmissions()),
+				});
+
+				return true;
 			});
-
-			return true;
-		});
 	},
 
 	/**
@@ -458,7 +459,8 @@ const internalProxyHost = {
 					})
 					.then(() => {
 						// Delete Nginx Config
-						return internalNginx.deleteConfig("proxy_host", row)
+						return internalNginx
+							.deleteConfig("proxy_host", row)
 							.then(() => notifySsoSidecar())
 							.then(() => internalNginx.reload());
 					})
@@ -496,7 +498,7 @@ const internalProxyHost = {
 			.orderBy(castJsonIfNeed("domain_names"), "ASC");
 
 		if (accessData.permission_visibility !== "all") {
-			query.andWhere("owner_user_id", access.token.getUserId(1));
+			scopeToOwnerOrAllowed(query, access.token.getUserId(1), access.getPermissions?.()?.meta);
 		}
 
 		// Query is used for searching
@@ -522,18 +524,18 @@ const internalProxyHost = {
 	 *
 	 * @param   {Number}  user_id
 	 * @param   {String}  visibility
+	 * @param   {Object}  [permissionsMeta]  the user's permissions meta, as already loaded by access
 	 * @returns {Promise}
 	 */
-	getCount: (user_id, visibility) => {
+	getCount: async (user_id, visibility, permissionsMeta) => {
 		const query = proxyHostModel.query().count("id as count").where("is_deleted", 0);
 
 		if (visibility !== "all") {
-			query.andWhere("owner_user_id", user_id);
+			scopeToOwnerOrAllowed(query, user_id, permissionsMeta);
 		}
 
-		return query.first().then((row) => {
-			return Number.parseInt(row.count, 10);
-		});
+		const row = await query.first();
+		return Number.parseInt(row.count, 10);
 	},
 };
 

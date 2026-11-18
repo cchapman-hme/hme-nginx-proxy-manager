@@ -143,6 +143,9 @@ jobs:
           FAILED_REF: ${{ steps.merge.outputs.failed_ref }}
           LATEST: ${{ steps.upstream.outputs.latest }}
         run: |
+          gh label create upstream-sync   --color 0e8a16 --description "Automated upstream synchronisation" --force >/dev/null
+          gh label create release         --color 1d76db --description "Fork release automation" --force >/dev/null
+          gh label create needs-attention --color d93f0b --description "Automation is blocked and needs a human" --force >/dev/null
           TITLE="Release blocked: upstream $LATEST cannot be merged into master"
           BODY=$(cat <<EOF
           Automatic release of upstream **$LATEST** is blocked. Merging **$FAILED_REF** into \`master\` conflicts in:
@@ -239,6 +242,9 @@ jobs:
           CONFLICTS: ${{ steps.merge.outputs.conflicts }}
           COUNT: ${{ steps.merge.outputs.new_commits }}
         run: |
+          gh label create upstream-sync   --color 0e8a16 --description "Automated upstream synchronisation" --force >/dev/null
+          gh label create release         --color 1d76db --description "Fork release automation" --force >/dev/null
+          gh label create needs-attention --color d93f0b --description "Automation is blocked and needs a human" --force >/dev/null
           TITLE="Upstream sync blocked: merge conflicts on develop"
           BODY=$(cat <<EOF
           Automatic merge of **$COUNT** upstream commit(s) into \`develop\` conflicts in:
