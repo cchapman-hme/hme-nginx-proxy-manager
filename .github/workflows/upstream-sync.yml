@@ -41,6 +41,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # gh picks its target repo from the git remotes and prefers one named
+  # "upstream", which the jobs below add. Pin it to this fork, or label/issue
+  # calls go to NginxProxyManager and fail with 403. (Explicit `gh api repos/...`
+  # paths are unaffected.)
+  GH_REPO: ${{ github.repository }}
   UPSTREAM_REPO: NginxProxyManager/nginx-proxy-manager
   UPSTREAM_URL: https://github.com/NginxProxyManager/nginx-proxy-manager.git
   GIT_AUTHOR_NAME: github-actions[bot]
