@@ -20,6 +20,7 @@ import {
 import { fetchUserGroups, isGroupMember } from "./group-check.js";
 import { saveLoginSessionAndRedirect } from "./login-session.js";
 import { acquireTokenByCode, getAuthCodeUrl, resetAllClients } from "./msal-client.js";
+import { PAGE_CSP, aadstsCode, deniedPage, signInFailedPage, signedOutPage } from "./pages.js";
 import { SsoSessionStore } from "./session-store.js";
 import { headerSafe, queryString, rawReturnParam, validateReturnUrl } from "./validation.js";
 
@@ -79,6 +80,43 @@ function viaPublicProxy(req) {
 }
 
 /**
+ * Send one of the sidecar's HTML pages (pages.js).
+ * @param {import("express").Response} res
+ * @param {number} status
+ * @param {string} html
+ */
+function sendPage(res, status, html) {
+	res.status(status);
+	res.set("Content-Type", "text/html; charset=utf-8");
+	res.set("Content-Security-Policy", PAGE_CSP);
+	res.set("X-Content-Type-Options", "nosniff");
+	res.set("Referrer-Policy", "no-referrer");
+	return res.send(html);
+}
+
+/**
+ * A sign-in failure page for this request's host.
+ * @param {import("express").Request} req
+ * @param {import("express").Response} res
+ * @param {number} status
+ * @param {{ kind: string, error?: string, description?: string, returnPath?: string }} detail
+ */
+function sendSignInFailed(req, res, status, detail) {
+	return sendPage(res, status, signInFailedPage({ host: originalHost(req), ...detail }));
+}
+
+/**
+ * The session's user when it was issued for this host's tenant, else null.
+ * @param {import("express").Request} req
+ * @param {{ tenantId: string } | null} hostCfg
+ */
+function sessionUserFor(req, hostCfg) {
+	const user = req.session?.ssoUser;
+	if (!user || !hostCfg || user.tenantId !== hostCfg.tenantId) return null;
+	return user;
+}
+
+/**
  * Wrap an async route handler so rejections become 5xx responses instead of
  * crashing the process.
  */
@@ -87,7 +125,7 @@ function route(handler) {
 		handler(req, res).catch((err) => {
 			console.error(`[sso] ${req.method} ${req.path} failed:`, err.message);
 			if (!res.headersSent) {
-				res.status(503).send("SSO temporarily unavailable");
+				sendSignInFailed(req, res, 503, { kind: "server" });
 			}
 		});
 	};
@@ -180,16 +218,17 @@ app.get(
 	route(async (req, res) => {
 		const global = getGlobalConfig();
 		if (!global?.enabled) {
-			return res.status(503).send("SSO is not enabled");
+			return sendSignInFailed(req, res, 503, { kind: "config" });
 		}
 
 		const host = originalHost(req);
 		const hostCfg = await loadHostConfig(host);
 		if (!hostCfg?.tenantId || !hostCfg.clientId || !hostCfg.clientSecret) {
-			return res.status(503).send("SSO is not configured for this host");
+			return sendSignInFailed(req, res, 503, { kind: "config" });
 		}
 		if (!hostCfg.redirectUri) {
-			return res.status(503).send("SSO requires at least one non-wildcard domain name on this host");
+			console.warn(`[sso] Login refused — host=${host} has no non-wildcard domain name`);
+			return sendSignInFailed(req, res, 503, { kind: "config" });
 		}
 
 		const returnUrl = validateReturnUrl(rawReturnParam(req), hostCfg.cookieDomain, host);
@@ -202,7 +241,7 @@ app.get(
 		req.session.regenerate((err) => {
 			if (err) {
 				console.error("[sso] Session regeneration failed during login:", err.message);
-				return res.status(500).send("SSO login failed");
+				return sendSignInFailed(req, res, 500, { kind: "server", returnPath: returnUrl });
 			}
 			saveLoginSessionAndRedirect(req, res, {
 				state,
@@ -218,7 +257,7 @@ app.get(
 				})
 				.catch((saveErr) => {
 					console.error("[sso] Login session save failed:", saveErr.message);
-					if (!res.headersSent) res.status(500).send("SSO login failed");
+					if (!res.headersSent) sendSignInFailed(req, res, 500, { kind: "server", returnPath: returnUrl });
 				});
 		});
 	}),
@@ -235,11 +274,19 @@ app.get(
 		const providerError = queryString(req.query.error);
 
 		if (providerError) {
-			console.warn(`[sso] Identity provider returned error=${providerError}`);
-			return res.status(400).send("Sign-in was not completed");
+			const description = queryString(req.query.error_description);
+			console.warn(
+				`[sso] Identity provider returned error=${providerError} ${aadstsCode(description)}`.trimEnd(),
+			);
+			return sendSignInFailed(req, res, 400, { kind: "provider", error: providerError, description });
+		}
+		// Entra ID's sign-out sends the browser here with no parameters: the
+		// callback is the one URI registered on the app (see /sso/logout).
+		if (!code && !state) {
+			return res.redirect("/sso/signed-out");
 		}
 		if (!code || !state) {
-			return res.status(400).send("Missing code or state");
+			return sendSignInFailed(req, res, 400, { kind: "state" });
 		}
 
 		const host = originalHost(req);
@@ -248,14 +295,14 @@ app.get(
 			console.warn(
 				`[sso] Invalid OAuth state — host=${host} hasCookie=${!!req.headers.cookie} sessionHasState=${!!pending?.oauthState}`,
 			);
-			return res.status(403).send("Invalid OAuth state");
+			return sendSignInFailed(req, res, 403, { kind: "state" });
 		}
 		delete req.session.oauthState;
 		delete req.session.loginHost;
 
 		const hostCfg = await loadHostConfig(host);
 		if (!hostCfg?.redirectUri) {
-			return res.status(503).send("SSO is not configured for this host");
+			return sendSignInFailed(req, res, 503, { kind: "config" });
 		}
 
 		// Capture return URL before session regeneration destroys it
@@ -267,7 +314,7 @@ app.get(
 			result = await acquireTokenByCode(hostCfg, code, hostCfg.redirectUri, hasGroups);
 		} catch (err) {
 			console.error("[sso] Token exchange failed:", err.message);
-			return res.status(401).send("SSO authentication failed");
+			return sendSignInFailed(req, res, 401, { kind: "token", returnPath: savedReturnUrl });
 		}
 
 		// Fetch group memberships if needed. A failed lookup is "unknown", which
@@ -276,7 +323,7 @@ app.get(
 		if (hasGroups) {
 			groups = result.accessToken ? await fetchUserGroups(result.accessToken) : null;
 			if (groups === null) {
-				return res.status(502).send("Could not verify group membership");
+				return sendSignInFailed(req, res, 502, { kind: "groups", returnPath: savedReturnUrl });
 			}
 		}
 
@@ -284,7 +331,7 @@ app.get(
 		req.session.regenerate((err) => {
 			if (err) {
 				console.error("[sso] Session regeneration failed:", err.message);
-				return res.status(500).send("SSO authentication failed");
+				return sendSignInFailed(req, res, 500, { kind: "server", returnPath: savedReturnUrl });
 			}
 
 			req.session.ssoUser = {
@@ -303,7 +350,7 @@ app.get(
 			req.session.save((saveErr) => {
 				if (saveErr) {
 					console.error("[sso] Session save failed:", saveErr.message);
-					return res.status(500).send("SSO authentication failed");
+					return sendSignInFailed(req, res, 500, { kind: "server", returnPath: savedReturnUrl });
 				}
 				console.log(`[sso] Login completed — host=${host} user=${req.session.ssoUser.email || "(unknown)"}`);
 				res.redirect(savedReturnUrl);
@@ -314,6 +361,9 @@ app.get(
 
 // ---------------------------------------------------------------------------
 // GET /sso/logout — destroy session, redirect to Entra ID logout
+// Without ?return= the browser comes back through /sso/callback (the URI
+// registered on the app, so Entra ID honours it) to /sso/signed-out, instead
+// of to a protected page that would start a new sign-in straight away.
 // ---------------------------------------------------------------------------
 app.get(
 	"/sso/logout",
@@ -321,23 +371,90 @@ app.get(
 		const host = originalHost(req);
 		const hostCfg = await loadHostConfig(host).catch(() => null);
 		const cookieDomain = hostCfg?.cookieDomain || "";
-		const safeReturn = validateReturnUrl(queryString(req.query.return), cookieDomain, host);
+		const rawReturn = queryString(req.query.return);
+		const safeReturn = rawReturn ? validateReturnUrl(rawReturn, cookieDomain, host) : "";
 		const isAbsolute = safeReturn.startsWith("https://") || safeReturn.startsWith("http://");
-		const absoluteUri = isAbsolute ? safeReturn : `${req.protocol}://${host}${safeReturn}`;
+		const absoluteUri = !safeReturn
+			? hostCfg?.redirectUri || `${req.protocol}://${host}/sso/signed-out`
+			: isAbsolute
+				? safeReturn
+				: `${req.protocol}://${host}${safeReturn}`;
+		const user = req.session?.ssoUser;
 
 		req.session.destroy(() => {
 			if (cookieDomain) {
 				res.clearCookie("npm_sso_sid", { domain: cookieDomain, path: "/" });
 			}
 			res.clearCookie("npm_sso_sid", { path: "/" });
+			if (user) {
+				console.log(`[sso] Logout — host=${host} user=${user.email || "(unknown)"}`);
+			}
 			if (hostCfg?.tenantId) {
 				const tenant = encodeURIComponent(hostCfg.tenantId);
 				res.redirect(
 					`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/logout?post_logout_redirect_uri=${encodeURIComponent(absoluteUri)}`,
 				);
 			} else {
-				res.redirect(safeReturn);
+				res.redirect(safeReturn || "/sso/signed-out");
 			}
+		});
+	}),
+);
+
+// ---------------------------------------------------------------------------
+// GET /sso/signed-out — landing page after sign-out
+// ---------------------------------------------------------------------------
+app.get(
+	"/sso/signed-out",
+	route(async (req, res) => {
+		const host = originalHost(req);
+		const hostCfg = await loadHostConfig(host).catch(() => null);
+		return sendPage(res, 200, signedOutPage({ host, user: sessionUserFor(req, hostCfg) }));
+	}),
+);
+
+// ---------------------------------------------------------------------------
+// GET /sso/denied — the 403 page. nginx serves it for every 403 it raises on
+// an SSO host (error_page 403 = @sso_denied), passing the denied request URI
+// in X-Original-URI. Says who is signed in and offers another account.
+// ---------------------------------------------------------------------------
+app.get(
+	"/sso/denied",
+	route(async (req, res) => {
+		const host = originalHost(req);
+		const hostCfg = await loadHostConfig(host).catch(() => null);
+		const user = sessionUserFor(req, hostCfg);
+		const groupDenied =
+			!!user &&
+			hostCfg.allowedGroups.length > 0 &&
+			user.groupsFetched &&
+			!isGroupMember(user.groups || [], hostCfg.allowedGroups);
+		const uri = req.headers["x-original-uri"];
+		let returnPath = validateReturnUrl(typeof uri === "string" ? uri : "", hostCfg?.cookieDomain, host);
+		if (returnPath.startsWith("/sso/")) returnPath = "/";
+		return sendPage(res, 403, deniedPage({ host, user, reason: groupDenied ? "group" : "", returnPath }));
+	}),
+);
+
+// ---------------------------------------------------------------------------
+// GET /sso/me — the signed-in user, for the protected site's own UI
+// (an account menu with sign-out). Same origin only: no CORS headers.
+// ---------------------------------------------------------------------------
+app.get(
+	"/sso/me",
+	route(async (req, res) => {
+		const host = originalHost(req);
+		const hostCfg = await loadHostConfig(host).catch(() => null);
+		const user = sessionUserFor(req, hostCfg);
+		res.set("X-Content-Type-Options", "nosniff");
+		// 200 either way: a page asks on every load, and a 401 would log an error in its console
+		if (!user) {
+			return res.json({ signedIn: false });
+		}
+		return res.json({
+			signedIn: true,
+			name: String(user.name || ""),
+			email: String(user.email || ""),
 		});
 	}),
 );

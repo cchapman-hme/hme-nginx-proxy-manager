@@ -12,7 +12,7 @@ Browser → nginx (proxy host) → /_sso_verify (internal) → sidecar 127.0.0.1
                                     │
                                     ├─ 200 → request is proxied to the upstream
                                     ├─ 401 → 302 to /sso/login → Entra ID → /sso/callback
-                                    └─ 403 → "Group membership required"
+                                    └─ 403 → error_page → @sso_denied → /sso/denied page
 ```
 
 - **Listens on:** `127.0.0.1:3180` (loopback only; never exposed directly)
@@ -30,6 +30,9 @@ Browser → nginx (proxy host) → /_sso_verify (internal) → sidecar 127.0.0.1
 | `/sso/login`    | GET    | Public             | Starts the authorization-code flow                        |
 | `/sso/callback` | GET    | Public             | Exchanges the code for tokens, creates the session        |
 | `/sso/logout`   | GET    | Public             | Destroys the session and signs out of Entra ID            |
+| `/sso/signed-out` | GET  | Public             | Landing page after sign-out, with a sign-in button        |
+| `/sso/denied`   | GET    | nginx `error_page 403` | 403 page: who is signed in, use a different account, sign out |
+| `/sso/me`       | GET    | Public (same origin) | `{signedIn, name, email}` for the site's own account menu (200 when signed out too) |
 | `/sso/reload`   | POST   | Backend only       | Drops caches after host or setting changes (nginx 403s it)|
 | `/sso/health`   | GET    | Loopback only      | Health check (nginx 403s it)                              |
 
@@ -93,3 +96,27 @@ npm test
 
 Environment overrides: `SSO_PORT`, `SSO_DATA_DIR`, `SSO_DB_PATH`,
 `SSO_SESSION_DB_PATH`, `SSO_SESSION_SECRET`, `SSO_SECURE_COOKIE=true`.
+
+## Pages and account menu
+
+Failures are HTML pages (`pages.js`) with the next step, not bare status text:
+
+- **No access (403).** nginx sends every 403 it raises on an SSO host to the
+  sidecar (`error_page 403 = @sso_denied`): the group check, an access list,
+  the blocked internal endpoints. The page names the signed-in account when
+  the group check failed and offers **Use a different account** (`/sso/login`,
+  which always shows Entra ID's account picker) and **Sign out**. Upstream
+  403s pass through unchanged.
+- **Sign-in failed.** Entra ID errors (with the AADSTS code only), expired or
+  reused sign-in links, token and group-lookup failures, and hosts without
+  SSO each get a page with **Try again** where retrying can help.
+- **Signed out.** `/sso/logout` without `?return=` sends Entra ID's
+  `post_logout_redirect_uri` to the host's registered callback, which
+  forwards a parameterless request to `/sso/signed-out`. A protected page as
+  the return target would start a new sign-in straight away. An explicit
+  same-site `?return=` is still honoured.
+
+A protected site can show the signed-in user and a sign-out control by
+fetching `/sso/me` (same origin, `credentials: "same-origin"`); link to
+`/sso/logout` to sign out and to `/sso/login?return=<path>` to switch
+accounts.
