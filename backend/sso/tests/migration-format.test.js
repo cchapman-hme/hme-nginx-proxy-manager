@@ -10,7 +10,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = join(__dirname, "..", "..", "migrations");
 
 describe("SSO migration module format", () => {
-	const ssoMigrations = ["20260318000000_sso_per_host.js", "20260318000001_sso_cleanup_settings.js"];
+	const ssoMigrations = [
+		"20260318000000_sso_per_host.js",
+		"20260318000001_sso_cleanup_settings.js",
+		"20261119000000_sso_path_groups.js",
+	];
 
 	for (const filename of ssoMigrations) {
 		describe(filename, () => {

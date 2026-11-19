@@ -165,6 +165,7 @@ export interface ProxyHost {
 	ssoClientSecret: string;
 	ssoCookieDomain: string;
 	ssoAllowedGroups: string[] | null;
+	ssoPathGroups: { path: string; groups: string[] }[] | null;
 	// Expansions:
 	owner?: User;
 	accessList?: AccessList;

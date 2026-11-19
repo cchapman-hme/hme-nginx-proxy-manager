@@ -17,7 +17,8 @@ import {
 	normaliseHostname,
 	reloadConfig,
 } from "./config.js";
-import { fetchUserGroups, isGroupMember } from "./group-check.js";
+import { decide, needsGroups } from "./access.js";
+import { fetchUserGroups } from "./group-check.js";
 import { saveLoginSessionAndRedirect } from "./login-session.js";
 import { acquireTokenByCode, getAuthCodeUrl, resetAllClients } from "./msal-client.js";
 import { deniedPage, loginUrlFor, PAGE_CSP } from "./pages.js";
@@ -155,16 +156,16 @@ app.get(
 			return res.sendStatus(401);
 		}
 
-		// Check per-host group restrictions. A session created on a host without
-		// group restrictions has no membership data; send the user back through
-		// login so the groups get fetched for this host.
-		if (hostCfg.allowedGroups.length > 0) {
-			if (!user.groupsFetched) {
-				return res.sendStatus(401);
-			}
-			if (!isGroupMember(user.groups || [], hostCfg.allowedGroups)) {
-				return res.status(403).send("Group membership required");
-			}
+		// Group restrictions: the host's allowed groups, or a path rule's groups
+		// for its paths (access.js). A session created on a host without group
+		// restrictions has no membership data; send the user back through login
+		// so the groups get fetched for this host.
+		const decision = decide(hostCfg, user, req.headers["x-original-uri"]);
+		if (decision === "login") {
+			return res.sendStatus(401);
+		}
+		if (decision !== "allow") {
+			return res.status(403).send("Group membership required");
 		}
 
 		res.set("X-SSO-User", headerSafe(user.name));
@@ -195,7 +196,7 @@ app.get(
 
 		const returnUrl = validateReturnUrl(rawReturnParam(req), hostCfg.cookieDomain, host);
 		const state = randomBytes(24).toString("base64url");
-		const hasGroups = hostCfg.allowedGroups.length > 0;
+		const hasGroups = needsGroups(hostCfg);
 		const authUrl = await getAuthCodeUrl(hostCfg, state, hostCfg.redirectUri, hasGroups);
 
 		// Regenerate the session before storing OAuth state so a stale cookie
@@ -261,7 +262,7 @@ app.get(
 
 		// Capture return URL before session regeneration destroys it
 		const savedReturnUrl = validateReturnUrl(req.session.returnUrl, hostCfg.cookieDomain, host);
-		const hasGroups = hostCfg.allowedGroups.length > 0;
+		const hasGroups = needsGroups(hostCfg);
 
 		let result;
 		try {
@@ -357,13 +358,9 @@ app.get(
 		const candidate = req.session?.ssoUser;
 		// A session from another tenant is not this host's sign-in
 		const user = candidate && hostCfg && candidate.tenantId === hostCfg.tenantId ? candidate : null;
-		const groupDenied =
-			!!user &&
-			hostCfg.allowedGroups.length > 0 &&
-			!!user.groupsFetched &&
-			!isGroupMember(user.groups || [], hostCfg.allowedGroups);
-
 		const uri = req.headers["x-original-uri"];
+		const groupDenied = !!user && !!user.groupsFetched && decide(hostCfg, user, uri) === "deny";
+
 		let path = validateReturnUrl(typeof uri === "string" ? uri : "", hostCfg?.cookieDomain, host);
 		// Never send the user back to a sidecar URL (e.g. a blocked /sso/verify)
 		if (!path.startsWith("/") || path.startsWith("/sso/")) path = "/";

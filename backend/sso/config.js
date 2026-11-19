@@ -5,6 +5,7 @@
 // the main NPM app uses.
 
 import { existsSync } from "node:fs";
+import { parsePathGroups } from "./access.js";
 import { parseGroups } from "./parse-groups.js";
 
 // ---------------------------------------------------------------------------
@@ -184,6 +185,8 @@ export function rowToHostConfig(row) {
 		clientSecret: String(row.sso_client_secret || ""),
 		cookieDomain: sanitiseCookieDomain(row.sso_cookie_domain),
 		allowedGroups: parseGroups(row.sso_allowed_groups),
+		// Path rules (sso_path_groups) replace allowedGroups for their paths: access.js
+		pathRules: parsePathGroups(row.sso_path_groups),
 		// Entra ID does not allow wildcard redirect URIs, so the callback always
 		// goes to the first concrete domain name of the host.
 		redirectUri: primary ? `https://${primary}/sso/callback` : null,
@@ -196,7 +199,7 @@ async function getHostSnapshot() {
 	}
 	const rows = await query(
 		"SELECT domain_names, sso_tenant_id, sso_client_id, sso_client_secret, " +
-			"sso_cookie_domain, sso_allowed_groups " +
+			"sso_cookie_domain, sso_allowed_groups, sso_path_groups " +
 			"FROM proxy_host WHERE is_deleted = 0 AND enabled = 1 AND sso_enabled = 1",
 	);
 	const hosts = rows.map(rowToHostConfig).filter(Boolean);
@@ -237,6 +240,7 @@ export async function loadGlobalConfig() {
  * @property {string} clientSecret
  * @property {string} cookieDomain
  * @property {string[]} allowedGroups
+ * @property {{ path: string, groups: string[] }[]} pathRules - longest path first
  * @property {string | null} redirectUri
  */
 

@@ -31,6 +31,7 @@ const fetchProxyHost = (id: number | "new") => {
 			ssoClientSecret: "",
 			ssoCookieDomain: "",
 			ssoAllowedGroups: null,
+			ssoPathGroups: null,
 		} as ProxyHost);
 	}
 	return getProxyHost(id, ["owner"]);
