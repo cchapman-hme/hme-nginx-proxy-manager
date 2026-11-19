@@ -17,6 +17,7 @@ export const SSO_RELEVANT_FIELDS = [
 	"sso_client_secret",
 	"sso_cookie_domain",
 	"sso_allowed_groups",
+	"sso_path_groups",
 	"domain_names",
 ];
 
@@ -52,7 +53,39 @@ export function validateSsoFields(data) {
 		errors.push("SSO cannot be combined with an access list on the same host");
 	}
 
+	errors.push(...validatePathGroups(data.sso_path_groups));
+
 	return { valid: missing.length === 0 && errors.length === 0, missing, errors };
+}
+
+/**
+ * Check sso_path_groups: each rule path starts with "/", uses only
+ * [A-Za-z0-9._~-/], has no "." or ".." segment, and appears once (compared
+ * case-insensitively, trailing slash ignored, as the sidecar matches them).
+ * An empty group list is allowed: that rule admits nobody.
+ * @param {unknown} rules
+ * @returns {string[]} errors
+ */
+export function validatePathGroups(rules) {
+	if (rules === null || typeof rules === "undefined") return [];
+	if (!Array.isArray(rules)) return ["SSO path rules must be a list"];
+	const errors = [];
+	const seen = new Set();
+	for (const rule of rules) {
+		const raw = String(rule?.path ?? "");
+		const segments = raw.split("/").filter(Boolean);
+		if (!/^\/[A-Za-z0-9._~\-/]*$/.test(raw) || segments.some((s) => s === "." || s === "..")) {
+			errors.push(`SSO path rule "${raw}" is not a valid path (start with /, letters, digits and . _ ~ - only)`);
+			continue;
+		}
+		const key = `/${segments.join("/")}`.toLowerCase();
+		if (seen.has(key)) errors.push(`SSO path rule "${raw}" is listed twice`);
+		seen.add(key);
+		if (!Array.isArray(rule.groups) || rule.groups.some((g) => typeof g !== "string")) {
+			errors.push(`SSO path rule "${raw}" needs a list of group IDs`);
+		}
+	}
+	return errors;
 }
 
 /**

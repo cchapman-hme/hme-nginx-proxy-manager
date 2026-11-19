@@ -51,15 +51,33 @@ When it is off, every host passes through regardless of its own settings.
 | `sso_client_secret`  | yes      | Client secret. Never returned by the API; leave blank on edit to keep |
 | `sso_cookie_domain`  | no       | e.g. `.example.com` to share one session across subdomains            |
 | `sso_allowed_groups` | no       | JSON array of group object IDs; empty allows any tenant user          |
+| `sso_path_groups`    | no       | JSON array of `{ "path", "groups" }` path rules (below)               |
 
 The redirect URI to register in the app registration is
 `https://<first non-wildcard domain of the host>/sso/callback`. Entra ID does not
 accept wildcard redirect URIs, so a host whose only domain is a wildcard cannot
 use SSO.
 
-When `sso_allowed_groups` is set the sidecar requests the delegated Graph scope
-`GroupMember.Read.All` (admin consent required) and reads `/me/memberOf` with
-paging. A failed Graph lookup denies access.
+When `sso_allowed_groups` or `sso_path_groups` is set the sidecar requests the
+delegated Graph scope `GroupMember.Read.All` (admin consent required) and reads
+`/me/memberOf` with paging. A failed Graph lookup denies access.
+
+### Path rules
+
+`sso_path_groups` gives parts of a host their own groups (UI: Path groups, one
+rule per line, `/reports/ = group-id, group-id`). For a request under a rule's
+path (the path itself or anything below it; the longest matching rule wins) the
+user needs one of the rule's groups, and the host's `sso_allowed_groups`
+neither grants nor is required there. Everything outside every rule keeps the
+host's groups. So someone can be allowed the rule's paths, the rest of the
+host, or both. A rule with no groups admits nobody.
+
+The sidecar matches the path nginx serves, not the raw request line: the query
+is dropped, percent-escapes are decoded once, repeated slashes merged and dot
+segments resolved, and the comparison ignores case. A malformed path, a path
+above the root, or a rule list the sidecar cannot read denies the request
+(`access.js`). Rule paths may use only letters, digits, `.`, `_`, `~`, `-` and
+`/`; saving a host with an invalid or duplicate rule fails.
 
 ## Access-denied page
 

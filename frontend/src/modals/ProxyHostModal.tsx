@@ -23,6 +23,29 @@ import { MANAGE, PROXY_HOSTS } from "src/modules/Permissions";
 import { validateNumber, validateString } from "src/modules/Validations";
 import { showObjectSuccess } from "src/notifications";
 
+
+/**
+ * SSO path rules as edited in the form: one rule per line, "path = group, group".
+ * A line with no groups ("/path =") is a rule that admits nobody.
+ */
+function parsePathGroupsText(text: unknown): { path: string; groups: string[] }[] | null {
+	const rules = String(text ?? "")
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line) => {
+			const at = line.indexOf("=");
+			const path = (at === -1 ? line : line.slice(0, at)).trim();
+			const groups = at === -1 ? [] : line.slice(at + 1).split(",").map((g) => g.trim()).filter(Boolean);
+			return { path, groups };
+		});
+	return rules.length ? rules : null;
+}
+
+function formatPathGroupsText(rules: { path: string; groups: string[] }[] | null | undefined): string {
+	return (rules || []).map((r) => `${r.path} = ${(r.groups || []).join(", ")}`.trimEnd()).join("\n");
+}
+
 const showProxyHostModal = (id: number | "new") => {
 	EasyModal.show(ProxyHostModal, { id });
 };
@@ -44,7 +67,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		setIsSubmitting(true);
 		setErrorMsg(null);
 
-		const { ssoAllowedGroups, ...rest } = values;
+		const { ssoAllowedGroups, ssoPathGroups, ...rest } = values;
 		const payload = {
 			id: id === "new" ? undefined : id,
 			...rest,
@@ -54,6 +77,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 						.map((s: string) => s.trim())
 						.filter(Boolean)
 				: null,
+			ssoPathGroups: parsePathGroupsText(ssoPathGroups),
 		};
 		payload.locations = (values.locations || []).filter((location: any) => location.path?.trim() !== "");
 
@@ -123,6 +147,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 							ssoClientSecret: data?.ssoClientSecret || "",
 							ssoCookieDomain: data?.ssoCookieDomain || "",
 							ssoAllowedGroups: data?.ssoAllowedGroups ? data.ssoAllowedGroups.join(", ") : "",
+							ssoPathGroups: formatPathGroupsText(data?.ssoPathGroups),
 							// Advanced tab
 							advancedConfig: data?.advancedConfig || "",
 							meta: data?.meta || {},
@@ -510,6 +535,23 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 															/>
 															<small className="form-hint">
 																<T id="host.sso.allowed-groups.description" />
+															</small>
+														</div>
+
+														<div className="mb-3">
+															<label className="form-label" htmlFor="ssoPathGroups">
+																<T id="host.sso.path-groups" />
+															</label>
+															<Field
+																as="textarea"
+																name="ssoPathGroups"
+																className="form-control text-monospace"
+																id="ssoPathGroups"
+																rows={3}
+																placeholder="/reports/ = group-id-3, group-id-4"
+															/>
+															<small className="form-hint">
+																<T id="host.sso.path-groups.description" />
 															</small>
 														</div>
 													</>

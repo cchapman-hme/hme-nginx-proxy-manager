@@ -1,6 +1,6 @@
-// End-to-end tests of GET /sso/denied: starts server.js against a synthetic
-// SQLite config database and session store, then calls it the way nginx's
-// @sso_denied location does.
+// End-to-end tests of GET /sso/denied and GET /sso/verify: starts server.js
+// against a synthetic SQLite config database and session store, then calls it
+// the way nginx's @sso_denied location and auth_request do.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
@@ -19,6 +19,8 @@ const SECONDARY = "b.example.test";
 const OPEN_HOST = "open.example.test";
 const TENANT = "tenant-1";
 const ALLOWED = "group-allowed";
+const RULES_HOST = "rules.example.test";
+const BILL = "group-bill";
 
 let dir;
 let child;
@@ -89,16 +91,30 @@ before(async () => {
 	const cfg = new Database(join(dir, "npm.sqlite"));
 	cfg.exec(`CREATE TABLE setting (id TEXT PRIMARY KEY, value TEXT);
 		CREATE TABLE proxy_host (domain_names TEXT, sso_tenant_id TEXT, sso_client_id TEXT, sso_client_secret TEXT,
-			sso_cookie_domain TEXT, sso_allowed_groups TEXT, is_deleted INT, enabled INT, sso_enabled INT);`);
+			sso_cookie_domain TEXT, sso_allowed_groups TEXT, sso_path_groups TEXT, is_deleted INT, enabled INT,
+			sso_enabled INT);`);
 	cfg.prepare("INSERT INTO setting VALUES ('sso-enabled', 'true')").run();
-	const insert = cfg.prepare("INSERT INTO proxy_host VALUES (?, ?, 'client-1', 'not-a-real-secret', ?, ?, 0, 1, 1)");
+	const insert = cfg.prepare(
+		"INSERT INTO proxy_host VALUES (?, ?, 'client-1', 'not-a-real-secret', ?, ?, ?, 0, 1, 1)",
+	);
 	insert.run(
 		JSON.stringify(["*.wild.example.test", PRIMARY, SECONDARY]),
 		TENANT,
 		".example.test",
 		JSON.stringify([ALLOWED]),
+		null,
 	);
-	insert.run(JSON.stringify([OPEN_HOST]), TENANT, "", "[]");
+	insert.run(JSON.stringify([OPEN_HOST]), TENANT, "", "[]", null);
+	insert.run(
+		JSON.stringify([RULES_HOST]),
+		TENANT,
+		"",
+		JSON.stringify([ALLOWED]),
+		JSON.stringify([
+			{ path: "/ai-backbill/", groups: [BILL] },
+			{ path: "/closed", groups: [] },
+		]),
+	);
 	cfg.close();
 
 	const port = await freePort();
@@ -218,5 +234,75 @@ describe("GET /sso/denied", () => {
 		const res = await denied({ host: "unknown.example.test" });
 		assert.equal(res.status, 403);
 		assert.match(await res.text(), /You can't open this page/);
+	});
+});
+
+/** A request as nginx's auth_request subrequest sends it (no X-Forwarded-For). */
+function verify({ host = RULES_HOST, uri = "/", cookie } = {}) {
+	return fetch(`${base}/sso/verify`, {
+		redirect: "manual",
+		headers: {
+			"X-Original-Host": host,
+			"X-Original-URI": uri,
+			...(cookie ? { Cookie: cookie } : {}),
+		},
+	});
+}
+
+describe("GET /sso/verify with path rules", () => {
+	it("main-site member: the site but not the rule's paths", async () => {
+		const cookie = sessionCookie(user([ALLOWED]));
+		assert.equal((await verify({ uri: "/", cookie })).status, 200);
+		assert.equal((await verify({ uri: "/queue.html?x=1", cookie })).status, 200);
+		assert.equal((await verify({ uri: "/ai-backbill/", cookie })).status, 403);
+		assert.equal((await verify({ uri: "/ai-backbill", cookie })).status, 403);
+		assert.equal((await verify({ uri: "/x/../ai-backbill/2026-10/bills/771.pdf", cookie })).status, 403);
+		assert.equal((await verify({ uri: "/%61i-backbill/", cookie })).status, 403);
+	});
+
+	it("rule-only member: the rule's paths but not the site", async () => {
+		const cookie = sessionCookie(user([BILL]));
+		const ok = await verify({ uri: "/ai-backbill/index.html", cookie });
+		assert.equal(ok.status, 200);
+		assert.equal(ok.headers.get("x-sso-email"), "pat@example.test");
+		assert.equal((await verify({ uri: "/", cookie })).status, 403);
+		assert.equal((await verify({ uri: "/ai-backbill/../index.html", cookie })).status, 403);
+	});
+
+	it("member of both: everything except a rule with no groups", async () => {
+		const cookie = sessionCookie(user([ALLOWED, BILL]));
+		assert.equal((await verify({ uri: "/", cookie })).status, 200);
+		assert.equal((await verify({ uri: "/ai-backbill/", cookie })).status, 200);
+		assert.equal((await verify({ uri: "/closed/x", cookie })).status, 403);
+	});
+
+	it("a session without group data is sent back through sign-in", async () => {
+		const cookie = sessionCookie(user([], { groupsFetched: false }));
+		assert.equal((await verify({ uri: "/ai-backbill/", cookie })).status, 401);
+		assert.equal((await verify({ uri: "/", cookie })).status, 401);
+	});
+
+	it("no session: sign-in", async () => {
+		assert.equal((await verify({ uri: "/ai-backbill/" })).status, 401);
+	});
+
+	it("hosts without rules are unchanged", async () => {
+		assert.equal((await verify({ host: PRIMARY, uri: "/ai-backbill/", cookie: sessionCookie(user([ALLOWED])) })).status, 200);
+		assert.equal((await verify({ host: PRIMARY, uri: "/", cookie: sessionCookie(user([BILL])) })).status, 403);
+		assert.equal((await verify({ host: OPEN_HOST, uri: "/", cookie: sessionCookie(user([], { groupsFetched: false })) })).status, 200);
+	});
+
+	it("the denied page explains a rule denial as a group denial", async () => {
+		const html = await (await denied({ host: RULES_HOST, uri: "/ai-backbill/", cookie: sessionCookie(user([ALLOWED])) })).text();
+		assert.match(html, /This account doesn't have access/);
+		const member = await (await denied({ host: RULES_HOST, uri: "/ai-backbill/", cookie: sessionCookie(user([BILL])) })).text();
+		assert.match(member, /You can't open this page/);
+	});
+
+	it("refuses calls that came through the public proxy", async () => {
+		const res = await fetch(`${base}/sso/verify`, {
+			headers: { "X-Original-Host": RULES_HOST, "X-Original-URI": "/", "X-Forwarded-For": "192.0.2.1" },
+		});
+		assert.equal(res.status, 403);
 	});
 });
