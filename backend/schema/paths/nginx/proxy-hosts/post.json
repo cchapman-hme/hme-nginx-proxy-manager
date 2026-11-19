@@ -95,6 +95,9 @@
 						},
 						"sso_allowed_groups": {
 							"$ref": "../../../components/proxy-host-object.json#/properties/sso_allowed_groups"
+						},
+						"sso_path_groups": {
+							"$ref": "../../../components/proxy-host-object.json#/properties/sso_path_groups"
 						}
 					}
 				},

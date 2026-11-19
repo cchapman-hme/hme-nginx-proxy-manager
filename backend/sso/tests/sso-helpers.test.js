@@ -1,13 +1,7 @@
 // Tests for SSO validation helpers — field validation and change detection.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-	hasSsoRelevantChanges,
-	normaliseCookieDomain,
-	SSO_RELEVANT_FIELDS,
-	SSO_REQUIRED_FIELDS,
-	validateSsoFields,
-} from "../../lib/sso-helpers.js";
+import { hasSsoRelevantChanges, normaliseCookieDomain, SSO_RELEVANT_FIELDS, SSO_REQUIRED_FIELDS, validateSsoFields, validatePathGroups } from "../../lib/sso-helpers.js";
 
 describe("validateSsoFields", () => {
 	describe("when sso_enabled is false/falsy (should always pass)", () => {
@@ -200,5 +194,31 @@ describe("normaliseCookieDomain", () => {
 	});
 	it("returns empty string for nullish", () => {
 		assert.equal(normaliseCookieDomain(null), "");
+	});
+});
+
+describe("validatePathGroups", () => {
+	const base = { sso_enabled: true, sso_tenant_id: "t", sso_client_id: "c", sso_client_secret: "s", domain_names: ["a.example"] };
+	it("accepts null, an empty list and good rules", () => {
+		assert.deepEqual(validatePathGroups(null), []);
+		assert.deepEqual(validatePathGroups(undefined), []);
+		assert.deepEqual(validatePathGroups([]), []);
+		assert.deepEqual(validatePathGroups([{ path: "/ai-backbill/", groups: ["g"] }, { path: "/closed", groups: [] }]), []);
+	});
+	it("rejects bad paths, duplicates and bad group lists", () => {
+		assert.equal(validatePathGroups("x").length, 1);
+		assert.equal(validatePathGroups([{ path: "no-slash", groups: [] }]).length, 1);
+		assert.equal(validatePathGroups([{ path: "/a/../b", groups: [] }]).length, 1);
+		assert.equal(validatePathGroups([{ path: "/a b", groups: [] }]).length, 1);
+		assert.equal(validatePathGroups([{ path: "/a/", groups: [] }, { path: "/A", groups: [] }]).length, 1);
+		assert.equal(validatePathGroups([{ path: "/a", groups: "g" }]).length, 1);
+	});
+	it("is part of validateSsoFields", () => {
+		const r = validateSsoFields({ ...base, sso_path_groups: [{ path: "bad", groups: [] }] });
+		assert.equal(r.valid, false);
+		assert.equal(validateSsoFields({ ...base, sso_path_groups: [{ path: "/ok", groups: [] }] }).valid, true);
+	});
+	it("is an SSO-relevant change (the sidecar reloads)", () => {
+		assert.equal(hasSsoRelevantChanges({ sso_path_groups: [] }), true);
 	});
 });

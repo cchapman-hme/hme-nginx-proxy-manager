@@ -491,6 +491,12 @@
 	"host.sso.cookie-domain.description": {
 		"defaultMessage": "Sama küpsise domeeniga hostid jagavad SSO seansse"
 	},
+	"host.sso.path-groups": {
+		"defaultMessage": "Rühmad tee järgi"
+	},
+	"host.sso.path-groups.description": {
+		"defaultMessage": "Üks reegel rea kohta: /tee = rühma-id, rühma-id. Reegli rühmad asendavad selle tee ja kõige selle all oleva jaoks nõutavad rühmad; ilma rühmadeta reegel ei luba kedagi."
+	},
 	"host.sso.redirect-uri": {
 		"defaultMessage": "Ümbersuunamise URI (genereeritakse automaatselt)"
 	},

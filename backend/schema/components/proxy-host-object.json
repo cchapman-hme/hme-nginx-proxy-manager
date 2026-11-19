@@ -195,6 +195,34 @@
 			"description": "Azure AD group IDs required to access this host (null = no group restriction)",
 			"example": null
 		},
+		"sso_path_groups": {
+			"oneOf": [
+				{ "type": "null" },
+				{
+					"type": "array",
+					"maxItems": 50,
+					"items": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": ["path", "groups"],
+						"properties": {
+							"path": {
+								"type": "string",
+								"pattern": "^/[A-Za-z0-9._~\\-/]*$",
+								"maxLength": 255
+							},
+							"groups": {
+								"type": "array",
+								"maxItems": 100,
+								"items": { "type": "string", "maxLength": 64 }
+							}
+						}
+					}
+				}
+			],
+			"description": "Path rules: the groups of a rule replace sso_allowed_groups for the paths under its path; a rule with no groups admits nobody (null = no path rules)",
+			"example": null
+		},
 		"certificate": {
 			"oneOf": [
 				{
