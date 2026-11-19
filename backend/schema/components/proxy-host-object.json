@@ -213,7 +213,8 @@
 							},
 							"groups": {
 								"type": "array",
-								"items": { "type": "string" }
+								"maxItems": 100,
+								"items": { "type": "string", "maxLength": 64 }
 							}
 						}
 					}

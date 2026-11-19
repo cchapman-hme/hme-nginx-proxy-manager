@@ -47,7 +47,9 @@ export function parsePathGroups(value) {
 			return [{ path: "/", groups: [] }];
 		}
 	}
-	if (!Array.isArray(parsed)) return [];
+	if (parsed === null || typeof parsed === "undefined") return [];
+	// Anything but a list is a value we cannot place: close the host
+	if (!Array.isArray(parsed)) return [{ path: "/", groups: [] }];
 	const rules = [];
 	for (const entry of parsed) {
 		const path = normaliseRulePath(entry?.path);

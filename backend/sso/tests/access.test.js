@@ -55,6 +55,9 @@ describe("parsePathGroups / normaliseRulePath", () => {
 	});
 	it("closes the whole host when the rules cannot be read", () => {
 		assert.deepEqual(parsePathGroups("{not json"), [{ path: "/", groups: [] }]);
+		assert.deepEqual(parsePathGroups("{}"), [{ path: "/", groups: [] }]);
+		assert.deepEqual(parsePathGroups("5"), [{ path: "/", groups: [] }]);
+		assert.deepEqual(parsePathGroups("null"), []);
 		assert.deepEqual(parsePathGroups([{ path: "no-slash", groups: [BILL] }]), [{ path: "/", groups: [] }]);
 		assert.deepEqual(parsePathGroups([{ path: "/a/../b", groups: [BILL] }]), [{ path: "/", groups: [] }]);
 	});

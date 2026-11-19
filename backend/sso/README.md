@@ -79,6 +79,24 @@ above the root, or a rule list the sidecar cannot read denies the request
 (`access.js`). Rule paths may use only letters, digits, `.`, `_`, `~`, `-` and
 `/`; saving a host with an invalid or duplicate rule fails.
 
+Notes:
+
+- Matching ignores case so that a case-insensitive upstream (IIS) cannot be
+  reached past a rule with `/REPORTS/`. On a case-sensitive upstream this also
+  puts case variants (`/Reports/`) under the rule; do not keep other content in
+  such directories.
+- Rules protect URLs, not files: a symlink or alias under a rule path that
+  points at other content serves it to the rule's groups.
+- Adding a rule to a host without allowed groups makes every sign-in on that
+  host fetch groups, so the app registration needs the `GroupMember.Read.All`
+  consent before the rule is saved (otherwise sign-in fails with 502).
+- Membership is read from `/me/memberOf`: direct members only, nested groups
+  do not count.
+- Rollback: an image without migration `20261119000000_sso_path_groups` will
+  not start on a database that has run it. Roll the migration back first
+  (`down` drops the column), and expect the host's groups to apply to the
+  rule's paths again once it is gone.
+
 ## Access-denied page
 
 nginx sends every 403 it raises itself on an SSO host to the sidecar
