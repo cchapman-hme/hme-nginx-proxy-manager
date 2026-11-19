@@ -491,6 +491,12 @@
 	"host.sso.cookie-domain.description": {
 		"defaultMessage": "Hosts sharing the same cookie domain share SSO sessions"
 	},
+	"host.sso.path-groups": {
+		"defaultMessage": "Path groups"
+	},
+	"host.sso.path-groups.description": {
+		"defaultMessage": "One rule per line: /path = group-id, group-id. The rule's groups replace the allowed groups for that path and everything under it; a rule with no groups admits nobody."
+	},
 	"host.sso.redirect-uri": {
 		"defaultMessage": "Redirect URI (auto-generated)"
 	},

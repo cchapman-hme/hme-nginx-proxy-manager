@@ -491,6 +491,12 @@
 	"host.sso.cookie-domain.description": {
 		"defaultMessage": "Các host dùng chung tên miền cookie sẽ dùng chung phiên SSO"
 	},
+	"host.sso.path-groups": {
+		"defaultMessage": "Nhóm theo đường dẫn"
+	},
+	"host.sso.path-groups.description": {
+		"defaultMessage": "Mỗi dòng một quy tắc: /đường-dẫn = id-nhóm, id-nhóm. Các nhóm của quy tắc thay thế các nhóm bắt buộc cho đường dẫn đó và mọi thứ bên dưới; quy tắc không có nhóm nào sẽ không cho ai truy cập."
+	},
 	"host.sso.redirect-uri": {
 		"defaultMessage": "URI chuyển hướng (tạo tự động)"
 	},
